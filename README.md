@@ -187,10 +187,3 @@ pytest service/tests/ -v
 
 - [Design Document](docs/design.md) — Functional requirements, data model, API contracts, high level design
 
----
-
-## Assignment Context
-
-Built as part of the *Agentic Software Engineering System* interview assignment.
-Demonstrates end-to-end SDLC automation with controlled autonomy:
-agents execute under defined boundaries, humans own oversight and final quality.
