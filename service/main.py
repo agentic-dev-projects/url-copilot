@@ -33,15 +33,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Routers ───────────────────────────────────────────────────────────────────
-from service.api.v1.router import api_router, redirect_router
-
-app.include_router(api_router)
-# Redirect lives at root level so short codes resolve as /{short_code}
-app.include_router(redirect_router)
-
-
 # ── Infrastructure endpoints ──────────────────────────────────────────────────
+# Registered before the redirect router so /health is not caught by /{short_code}
 @app.get("/health", tags=["infrastructure"], summary="Liveness probe")
 def health_check() -> dict:
     """
@@ -51,3 +44,11 @@ def health_check() -> dict:
     (to be added) for deep health checks before routing traffic.
     """
     return {"status": "healthy"}
+
+
+# ── Routers ───────────────────────────────────────────────────────────────────
+from service.api.v1.router import api_router, redirect_router
+
+app.include_router(api_router)
+# Redirect router is last — /{short_code} must not shadow any fixed paths above
+app.include_router(redirect_router)
