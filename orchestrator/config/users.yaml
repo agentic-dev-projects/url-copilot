@@ -1,0 +1,46 @@
+# users.yaml — Mock authentication token registry.
+#
+# Maps a bearer token string to a user profile.  The TokenAuthenticator in
+# orchestrator/gateway/auth.py loads this file and resolves any --token CLI
+# argument to a CurrentUser dataclass.
+#
+# How it works in the prototype
+# ------------------------------
+# 1. Developer runs: python -m orchestrator.run "..." --token alice_dev_token
+# 2. TokenAuthenticator looks up "alice_dev_token" in this file.
+# 3. Returns CurrentUser(github_login="alice", role="DEVELOPER", ...)
+# 4. The rest of the system uses CurrentUser — never the raw token string.
+#
+# How it would work in production
+# --------------------------------
+# Replace the YAML lookup with a call to your OAuth/SSO token introspection
+# endpoint.  The TokenAuthenticator interface (token → CurrentUser) stays
+# the same — no other code changes required.  This is the Adapter pattern.
+#
+# Roles and their capabilities (see rbac.yaml for full permission lists)
+# -----------------------------------------------------------------------
+# DEVELOPER       Trigger runs, view status, answer clarification questions.
+# TECH_LEAD       All developer permissions + approve architecture/schema gates.
+# RELEASE_MANAGER All tech lead permissions + approve release gate.
+# ADMIN           All permissions + user management + emergency override.
+
+users:
+  alice_dev_token:
+    github_login: alice
+    email: alice@example.com
+    role: DEVELOPER
+
+  bob_tl_token:
+    github_login: bob
+    email: bob@example.com
+    role: TECH_LEAD
+
+  carol_rm_token:
+    github_login: carol
+    email: carol@example.com
+    role: RELEASE_MANAGER
+
+  dave_admin_token:
+    github_login: dave
+    email: dave@example.com
+    role: ADMIN

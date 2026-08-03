@@ -1,0 +1,64 @@
+# rbac.yaml — Role-Based Access Control definitions.
+#
+# Defines what each role can do (permissions) and how many tokens they may
+# consume per day (daily_token_budget).  Loaded by RBACCheckpoint in
+# orchestrator/governance/checkpoint.py.
+#
+# Role inheritance
+# ----------------
+# The "inherits" field means a role automatically gains all permissions of its
+# parent role.  Resolution order:
+#   ADMIN → RELEASE_MANAGER → TECH_LEAD → DEVELOPER
+# When TokenAuthenticator builds a CurrentUser, it expands the full permission
+# list by walking the inheritance chain.
+#
+# Four-eyes principle
+# -------------------
+# Two key gates (architecture approval, schema change approval) require a user
+# with the listed permission who is NOT the person who triggered the run.
+# This is enforced in RBACCheckpoint.request_approval() by checking:
+#   approver.github_login != run_context.triggered_by
+# It satisfies the SOX change-control requirement common in financial services.
+#
+# Permissions reference
+# ---------------------
+# trigger_run           Start a new orchestration run.
+# view_runs             List runs and view their status/artifacts.
+# provide_clarification Answer the clarification loop questions (ambiguous reqs).
+# approve_architecture  Gate #1 — approve the architecture design artifact.
+# approve_schema_change Gate #2 — approve a detected DB schema migration.
+# approve_release       Gate #6 — final release approval before ship.
+# force_stop            Halt a running or paused run immediately.
+# rollback              Revert code changes from a completed run.
+# manage_users          Add/deactivate users in orch_users table.
+# emergency_override    Bypass any gate (logged as CHECKPOINT_APPROVED_OVERRIDE).
+
+roles:
+  DEVELOPER:
+    permissions:
+      - trigger_run
+      - view_runs
+      - provide_clarification
+    daily_token_budget: 50000
+
+  TECH_LEAD:
+    inherits: DEVELOPER
+    permissions:
+      - approve_architecture
+      - approve_schema_change
+      - force_stop
+      - rollback
+    daily_token_budget: 200000
+
+  RELEASE_MANAGER:
+    inherits: TECH_LEAD
+    permissions:
+      - approve_release
+    daily_token_budget: 200000
+
+  ADMIN:
+    inherits: RELEASE_MANAGER
+    permissions:
+      - manage_users
+      - emergency_override
+    daily_token_budget: -1   # -1 = unlimited

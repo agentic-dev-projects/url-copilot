@@ -1,0 +1,62 @@
+# evaluator.yaml — Hybrid LLM-as-Judge configuration.
+#
+# Controls which stages receive AI evaluation before the human approval gate,
+# which model runs the validator, and which critic prompt file to use per stage.
+# Loaded by HybridGate in orchestrator/evaluator/hybrid_gate.py.
+#
+# Why o1-mini as the validator model?
+# ------------------------------------
+# o1-mini is a reasoning model.  Unlike gpt-4o-mini (which is fast and cheap
+# but optimized for generation), o1-mini is designed for systematic analysis:
+# finding logical gaps, missing error handling, incorrect assumptions, and
+# security issues.  Using a DIFFERENT model from the doer (gpt-4o) prevents
+# the "echo chamber" problem where one model validates its own output style.
+#
+# Tradeoff: o1-mini is 3-5x slower and more expensive per call than gpt-4o-mini.
+# We accept this cost because it runs only 4 times per run, at the most critical
+# decision points.
+#
+# Evaluated stages and what the validator looks for
+# --------------------------------------------------
+# architecture_design   Pattern correctness, failure modes, security,
+#                       DB impact, cache invalidation risks.
+#
+# implementation        Code correctness, error handling completeness,
+#                       no hardcoded secrets, write safety (service/ only),
+#                       consistency with architecture artifact.
+#
+# tests                 Coverage of happy path + all error cases, regression
+#                       risk, test isolation (no shared state between tests).
+#                       Runs ONCE after both unit_tests and integration_tests
+#                       complete (combined artifact review).
+#
+# release_readiness     Checklist completeness, migration safety, no known
+#                       CVEs in new dependencies, docs updated.
+#
+# EvaluationReport schema (returned by o1-mini, parsed by ValidatorAgent)
+# -----------------------------------------------------------------------
+# overall_score:    int 1-5  (1=reject, 3=pass-with-notes, 5=excellent)
+# strengths:        list[str]  — what was done well
+# concerns:         list[str]  — non-blocking observations
+# blocking_issues:  list[str]  — must be acknowledged if human approves
+# recommendation:   "APPROVE" | "APPROVE_WITH_NOTES" | "REJECT"
+#
+# Override behavior
+# -----------------
+# If blocking_issues is non-empty and the human still approves, the gate is
+# logged as CHECKPOINT_APPROVED_OVERRIDE in orch_audit_events with the human's
+# justification text.  This creates a tamper-evident compliance audit trail.
+
+enabled_stages:
+  - architecture_design
+  - implementation
+  - tests            # covers unit_tests + integration_tests combined
+  - release_readiness
+
+validator_model: o1-mini
+
+prompts:
+  architecture_design: evaluator/eval_architecture_v1.txt
+  implementation:      evaluator/eval_implementation_v1.txt
+  tests:               evaluator/eval_tests_v1.txt
+  release_readiness:   evaluator/eval_release_v1.txt

@@ -1,0 +1,30 @@
+# seeds.yaml — Initial codebase facts seeded into orch_memory on first run.
+#
+# These facts are loaded by MemoryStore.seed_if_empty() at orchestrator startup.
+# They are inserted into orch_memory with memory_type="fact" and actor="seed"
+# if the orch_memory table is empty.  This ensures every stage agent starts
+# with foundational knowledge about the codebase without those facts needing
+# to be in every stage prompt.
+#
+# Why seed memory instead of putting facts in every system prompt?
+# ----------------------------------------------------------------
+# System prompts are static and versioned (prompts/{stage}_v1.txt).  Adding
+# codebase facts there would mean updating every prompt file when the stack
+# changes.  By storing facts in orch_memory, they are in one place, queryable,
+# and injectable via the same Layer 3 mechanism that carries reviewer preferences
+# and architectural decisions from prior runs.  The prompt files stay focused
+# on the stage-specific task.
+#
+# When to update this file
+# ------------------------
+# Add a fact here when a core architectural constraint changes that every stage
+# agent needs to know about (e.g., if the test runner switches from pytest to
+# a different framework, or a new mandatory coding convention is introduced).
+# Updating this file and reseeding takes effect on the next run.
+
+facts:
+  - "Framework: FastAPI with SQLAlchemy ORM and Pydantic v2 schemas"
+  - "Database: PostgreSQL 16 with Alembic migrations — orchestrator tables use orch_ prefix"
+  - "Auth: API key via X-API-Key header, SHA-256 hashed, never store plaintext"
+  - "Soft deletes via is_active flag — never hard delete URL or user records"
+  - "Test suite uses SQLite in-memory — no external services needed to run tests"

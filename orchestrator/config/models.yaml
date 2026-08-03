@@ -1,0 +1,44 @@
+# models.yaml — Per-stage LLM model selection.
+#
+# Maps each orchestration stage to the OpenAI model that runs it.
+# Loaded by PromptLoader and used by AIGateway to select the correct model
+# for each GatewayRequest.
+#
+# Design rationale: cost vs. quality segmentation
+# ------------------------------------------------
+# Not every stage needs the most capable model.  Segmenting by task type
+# reduces cost by ~60% versus using gpt-4o for everything, with no
+# measurable quality loss on the cheap stages:
+#
+#   gpt-4o        Reasoning-heavy tasks: architecture design, writing code,
+#                 writing tests.  Worth the higher cost because errors here
+#                 are expensive to fix downstream.
+#
+#   gpt-4o-mini   Templated/classification tasks: requirement analysis,
+#                 planning, docs, release checklist.  Output format is
+#                 constrained and predictable — cheaper model is sufficient.
+#
+#   o1-mini       Validator model used by the evaluator (evaluator.yaml).
+#                 Reasoning model — better at systematic critique than
+#                 gpt-4o-mini.  Only called 4 times per run (at evaluation gates).
+#
+# Approximate cost per run with this configuration
+# -------------------------------------------------
+# Cheap stages (5x gpt-4o-mini):   ~$0.008
+# Expensive stages (4x gpt-4o):    ~$0.035
+# Evaluator (4x o1-mini):          ~$0.018
+# Total estimate per run:           ~$0.06  (matches observed $0.047–$0.061)
+#
+# To change a model: edit this file and commit.  No code changes needed.
+
+stages:
+  requirements_analysis: gpt-4o-mini   # classification + ambiguity check
+  architecture_design:   gpt-4o         # reasoning: pattern selection, risk analysis
+  implementation_plan:   gpt-4o-mini    # templated task decomposition
+  test_plan:             gpt-4o-mini    # templated test case enumeration
+  implementation:        gpt-4o         # code generation
+  unit_tests:            gpt-4o         # test code generation
+  integration_tests:     gpt-4o         # integration test generation
+  documentation:         gpt-4o-mini    # structured docs update
+  release_readiness:     gpt-4o-mini    # checklist completion
+  classifier:            gpt-4o-mini    # single-call greenfield/brownfield/ambiguous
