@@ -34,9 +34,11 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-# API v1 router is registered here once endpoints are implemented.
-# from service.api.v1.router import api_router
-# app.include_router(api_router)
+from service.api.v1.router import api_router, redirect_router
+
+app.include_router(api_router)
+# Redirect lives at root level so short codes resolve as /{short_code}
+app.include_router(redirect_router)
 
 
 # ── Infrastructure endpoints ──────────────────────────────────────────────────

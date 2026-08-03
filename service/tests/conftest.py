@@ -5,8 +5,8 @@ Provides:
 - `test_db`  — isolated SQLite session, schema created/torn down per test
 - `client`   — FastAPI TestClient wired to test_db via dependency override
 
-Tests that need a real PostgreSQL connection (e.g. full integration tests)
-should create their own fixtures and skip the override below.
+Infrastructure dependencies (Redis, PostgreSQL) are replaced with in-process
+stubs so tests run without any external services.
 """
 
 import pytest
@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from service.api.deps import check_rate_limit
 from service.db.base import Base
 from service.db.session import get_db
 from service.main import app
@@ -43,12 +44,24 @@ def test_db():
 
 @pytest.fixture()
 def client(test_db):
-    """Yield a TestClient whose get_db dependency is overridden with test_db."""
+    """
+    Yield a TestClient with all infrastructure dependencies stubbed out.
+
+    Overrides:
+    - get_db          → SQLite test session (no PostgreSQL needed)
+    - check_rate_limit → no-op (no Redis needed)
+    """
 
     def _override_get_db():
         yield test_db
 
+    def _override_rate_limit():
+        pass  # always allow requests in tests
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[check_rate_limit] = _override_rate_limit
+
     with TestClient(app) as c:
         yield c
+
     app.dependency_overrides.clear()

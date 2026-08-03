@@ -104,10 +104,15 @@ def get_short_url_by_code(db: Session, short_code: str) -> ShortURL | None:
 
 def get_short_url_by_id(db: Session, url_id: str, owner: User) -> ShortURL | None:
     """Return a ShortURL owned by `owner`, or None if not found / not owner."""
+    import uuid as _uuid
+    try:
+        parsed_id = _uuid.UUID(url_id)
+    except ValueError:
+        return None
     return (
         db.query(ShortURL)
         .filter(
-            ShortURL.id == url_id,
+            ShortURL.id == parsed_id,
             ShortURL.owner_id == owner.id,
             ShortURL.is_active == True,  # noqa: E712
         )
