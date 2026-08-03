@@ -62,6 +62,127 @@ url-copilot/
 
 ---
 
+## Getting Started
+
+### Prerequisites
+
+- Python 3.11+
+- Docker Desktop (for PostgreSQL and Redis)
+- Git
+
+### 1. Clone the repository
+
+```bash
+git clone git@github.com:agentic-dev-projects/url-copilot.git
+cd url-copilot
+```
+
+### 2. Add Docker CLI to your PATH (macOS)
+
+```bash
+export PATH="$PATH:/Applications/Docker.app/Contents/Resources/bin"
+```
+
+To make this permanent, add the line above to your `~/.bash_profile` or `~/.zshrc`.
+
+### 3. Create and activate a virtual environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 4. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 5. Configure environment variables
+
+```bash
+cp .env.example .env
+```
+
+The defaults in `.env` work out of the box with Docker Compose — no edits needed for local development.
+
+### 6. Start PostgreSQL and Redis
+
+```bash
+docker compose up db cache -d
+```
+
+### 7. Run database migrations
+
+```bash
+alembic upgrade head
+```
+
+### 8. Start the application
+
+```bash
+uvicorn service.main:app --reload
+```
+
+The API is now running at `http://localhost:8000`.
+
+---
+
+## Verifying the Setup
+
+### Health check
+
+```bash
+curl http://localhost:8000/health
+# {"status": "healthy"}
+```
+
+### Register and get an API key
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com"}'
+# {"user_id": "...", "api_key": "sk_...", "key_prefix": "sk_..."}
+```
+
+### Shorten a URL
+
+```bash
+curl -X POST http://localhost:8000/api/v1/urls \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{"original_url": "https://example.com/some/long/path"}'
+# {"short_code": "abc123", "short_url": "http://localhost:8000/abc123", ...}
+```
+
+### Visit a short URL
+
+Open `http://localhost:8000/abc123` in your browser — it redirects to the original URL.
+
+### View analytics
+
+```bash
+curl http://localhost:8000/api/v1/urls/URL_ID/analytics \
+  -H "x-api-key: YOUR_API_KEY"
+```
+
+### Interactive API docs
+
+Open `http://localhost:8000/docs` in your browser for the full Swagger UI.
+
+---
+
+## Running Tests
+
+Tests use SQLite and stub out Redis — no external services needed.
+
+```bash
+pytest service/tests/ -v
+```
+
+---
+
 ## Documentation
 
 - [Design Document](docs/design.md) — Functional requirements, data model, API contracts, high level design
