@@ -121,17 +121,29 @@ def make_stage_node(
                             branch,
                             f"feat: {req[:60]}" if req else "feat: orchestrator implementation",
                         )
-                        pr_url = github_client.create_pr(
+                        pr_result = github_client.create_pr(
                             title=f"feat: {req[:70]}" if req else "feat: orchestrator implementation",
                             body=f"Automated PR from orchestrator run `{run_id}`.\n\n**Requirement**: {req}",
                             branch=branch,
                             base="main",
                         )
+                        pr_number = pr_result["pr_number"]
+                        pr_url = pr_result["pr_url"]
                         artifact["pr_url"] = pr_url
-                        artifact["pr_number"] = int(pr_url.rstrip("/").split("/")[-1]) if pr_url else None
+                        artifact["pr_number"] = pr_number
+                        # Persist to orch_runs so `status` command shows the PR
+                        _persist_pr(session_factory, run_id, pr_url, branch)
                     except Exception as exc:
                         artifact["pr_url"] = None
                         artifact["pr_creation_error"] = str(exc)
+
+            # If LLM itself set pr_url, persist it to orch_runs too
+            if stage_name == "implementation" and result.output_artifact:
+                artifact = result.output_artifact
+                lm_pr_url = artifact.get("pr_url")
+                lm_branch = artifact.get("branch_name")
+                if lm_pr_url and lm_branch:
+                    _persist_pr(session_factory, run_id, lm_pr_url, lm_branch)
 
             return {"stage_artifacts": {
                 **state.get("stage_artifacts", {}),
@@ -217,3 +229,15 @@ def _audit(
             stage_name=stage_name,
             details=details or {},
         )
+
+
+def _persist_pr(session_factory: Any, run_id: str, pr_url: str, branch: str) -> None:
+    """Write pr_url + feature_branch to orch_runs so the status command can show it."""
+    session = session_factory()
+    try:
+        from orchestrator.state.store import RunStateStore
+        RunStateStore(session).update_run_pr(run_id, pr_url, branch)
+    except Exception:
+        pass  # Non-fatal — the artifact already has the URL
+    finally:
+        session.close()

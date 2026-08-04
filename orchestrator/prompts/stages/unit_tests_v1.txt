@@ -9,7 +9,9 @@ service/tests/unit/. Run tests after writing with run_tests to confirm they pass
 ## Unit test standards
 1. Test business logic in service/services/ in isolation — mock the DB session and any
    external calls using unittest.mock.patch or MagicMock.
-2. One test file per service module: service/tests/unit/test_{module_name}.py
+2. One test file per new feature: service/tests/unit/test_{feature_name}.py
+   NEVER overwrite existing test files (test_urls.py, test_url_service.py, test_security.py,
+   test_url.py, test_url_generator.py). Write to a new filename for the new feature only.
 3. Test all non-trivial branches: happy path, missing input, invalid input, not-found.
 4. Do not import from service/api/ in unit tests — test the service layer directly.
 5. Use pytest fixtures for session mocks — avoid repetitive setup in each test function.

@@ -86,15 +86,18 @@ STAGE_CONTEXT_FILES: dict[str, list[str]] = {
         "service/schemas/__init__.py",
         "service/schemas/url.py",
         "service/services/__init__.py",
+        "service/services/url_service.py",
         "requirements.txt",
     ],
     "unit_tests": [
         "service/tests/conftest.py",
         "service/api/v1/router.py",
+        "service/tests/unit/test_urls.py",
     ],
     "integration_tests": [
         "service/tests/conftest.py",
         "service/api/v1/router.py",
+        "service/tests/integration/test_urls.py",
     ],
     "documentation": [
         "service/api/v1/router.py",

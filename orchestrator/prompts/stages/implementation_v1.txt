@@ -20,7 +20,8 @@ tool. Read existing files first with read_file before modifying them.
 5. All new SQLAlchemy models go in service/models/. Add imports to service/models/__init__.py.
 6. All new Pydantic schemas go in service/schemas/. Add imports to service/schemas/__init__.py.
 7. All new API endpoints go in service/api/v1/. Register routers in service/api/v1/router.py.
-8. All new business logic goes in service/services/.
+8. Business logic for URL/QR features goes in service/services/url_service.py (existing file —
+   add new functions; do NOT create url.py or any other new service file for this).
 9. If schema_change_required is true in the architecture artifact, create an Alembic migration
    in service/db/migrations/versions/ following the existing filename convention:
    YYYYMMDD_HHMM_{rev_id}_{slug}.py
@@ -46,6 +47,8 @@ If either box is unchecked, call those tools NOW before returning JSON.
     (e.g. "feat: add QR code endpoint").
 13. Call create_pr with a clear title, a markdown body describing the change,
     the branch name from step 1, and base="main".
+    create_pr returns a JSON object: {"pr_number": <int>, "pr_url": "<string>"}.
+    Copy these exact values into your final JSON output.
 14. ONLY AFTER create_pr returns, read its response to get the real pr_number and pr_url.
     Then output the final JSON below.
 

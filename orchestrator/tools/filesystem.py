@@ -23,6 +23,19 @@ REQUIREMENTS_TXT = PROJECT_ROOT / "requirements.txt"
 # Paths outside service/ that agents are explicitly allowed to write
 _ALLOWED_ROOT_FILES = frozenset({str(REQUIREMENTS_TXT)})
 
+# Files inside service/ that must never be overwritten by stage agents.
+# These are the original test suites — the LLM must write to new files
+# (e.g. test_qr_endpoint.py) rather than stomping on existing coverage.
+_READONLY_PATHS = frozenset({
+    str(SERVICE_DIR / "tests" / "unit"        / "test_urls.py"),
+    str(SERVICE_DIR / "tests" / "integration" / "test_urls.py"),
+    str(SERVICE_DIR / "tests" / "unit"        / "test_url_service.py"),
+    str(SERVICE_DIR / "tests" / "unit"        / "test_security.py"),
+    str(SERVICE_DIR / "tests" / "unit"        / "test_url.py"),
+    str(SERVICE_DIR / "tests" / "unit"        / "test_url_generator.py"),
+    str(SERVICE_DIR / "tests" / "integration" / "test_auth.py"),
+})
+
 
 class WriteGuardrailError(Exception):
     """Raised when write_file() is asked to write outside service/."""
@@ -70,6 +83,12 @@ def write_file(path: str, content: str) -> bool:
             f"write_file: path '{path}' resolves to '{resolved}' which is "
             f"outside service/ — write not permitted. "
             f"Only service/ files and requirements.txt may be written."
+        )
+    if str(resolved) in _READONLY_PATHS:
+        raise WriteGuardrailError(
+            f"write_file: '{path}' is a protected file and cannot be overwritten. "
+            f"Write your new tests to a different filename "
+            f"(e.g. test_qr_endpoint.py or test_<feature>_integration.py)."
         )
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")

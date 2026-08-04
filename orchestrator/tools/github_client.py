@@ -143,8 +143,8 @@ def create_pr(
     body: str,
     branch: str,
     base: str = _DEFAULT_BASE_BRANCH,
-) -> tuple[int, str]:
-    """Open a pull request and return (pr_number, pr_url).
+) -> dict:
+    """Open a pull request and return {"pr_number": int, "pr_url": str}.
 
     Args:
         title:  Pull request title.
@@ -153,7 +153,7 @@ def create_pr(
         base:   The base branch to merge into (default "main").
 
     Returns:
-        (pr_number, pr_url) tuple — e.g. (42, "https://github.com/org/repo/pull/42").
+        {"pr_number": int, "pr_url": str}
 
     Raises:
         GithubException: if the PR cannot be created (e.g. no commits ahead).
@@ -166,7 +166,7 @@ def create_pr(
         head=branch,
         base=base,
     )
-    return pr.number, pr.html_url
+    return {"pr_number": pr.number, "pr_url": pr.html_url}
 
 
 def poll_pr_status(pr_number: int) -> dict:

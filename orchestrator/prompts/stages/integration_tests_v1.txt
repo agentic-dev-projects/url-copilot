@@ -10,7 +10,9 @@ Write test files with write_file to service/tests/integration/. Run tests after 
 1. Test the full HTTP request/response cycle using FastAPI TestClient.
 2. Use the `client` fixture from service/tests/conftest.py — it provides a TestClient with
    SQLite in-memory DB and no-op rate limiting. Do not create your own TestClient.
-3. One test file per endpoint group: service/tests/integration/test_{resource}.py
+3. One test file per new feature: service/tests/integration/test_{feature_name}.py
+   NEVER overwrite existing test files (test_urls.py, test_auth.py). Write to a new
+   filename for the new feature only.
 4. Every endpoint needs at minimum:
    - Happy path (valid input, correct 2xx status and response body shape)
    - Auth failure (missing X-API-Key header → 401)

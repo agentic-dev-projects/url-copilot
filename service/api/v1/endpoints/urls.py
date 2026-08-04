@@ -2,7 +2,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse
+import base64
 
 from service.api.deps import check_rate_limit, get_current_user
 from service.config import settings
@@ -38,15 +39,16 @@ def generate_qr_code(
     url_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> StreamingResponse:
+) -> JSONResponse:
     short_url = url_service.get_short_url_by_id(db, url_id=url_id, owner=current_user)
     if not short_url or not short_url.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found or inactive")
 
-    qr_code_img = url_service.generate_qr_code(short_url.original_url)
-    response = StreamingResponse(content=qr_code_img, media_type="image/png")
-    response.headers["Content-Disposition"] = f"attachment; filename={url_id}.png"
-    return response
+    qr_bytes = url_service.generate_qr_code(short_url.original_url)
+    qr_code_base64 = base64.b64encode(qr_bytes.read()).decode()
+    qr_code_uri = f"data:image/png;base64,{qr_code_base64}"
+
+    return JSONResponse(content={"qr_code_url": qr_code_uri})
 
 
 @router.post(
