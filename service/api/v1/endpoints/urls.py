@@ -64,17 +64,17 @@ def shorten_url(
     summary="List all short URLs owned by the authenticated user",
 )
 def list_urls(
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, le=100),
     active_only: bool = Query(True),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> URLListResponse:
-    items, total = url_service.list_short_urls(db, owner=current_user, page=page, limit=limit, active_only=active_only)
+    items, total = url_service.list_short_urls(db, owner=current_user, skip=skip, limit=limit, active_only=active_only)
     return URLListResponse(
         items=[_to_response(u, settings.base_url) for u in items],
         total=total,
-        page=page,
+        page=(skip // limit) + 1,
         limit=limit,
     )
 
