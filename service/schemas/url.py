@@ -15,6 +15,11 @@ from datetime import datetime
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
+class PaginationQueryParams(BaseModel):
+    skip: int = Field(default=0, description="Number of records to skip for pagination")
+    limit: int = Field(default=10, ge=1, le=100, description="Limit on the number of records to return")
+
+
 class QRResponseSchema(BaseModel):
     """Response schema for the QR code endpoint."""
     qr_code_url: str = Field(..., description="URL or base64 data URI of the generated QR code image")
@@ -26,47 +31,4 @@ class ShortenRequest(BaseModel):
         None,
         min_length=3,
         max_length=32,
-        description="Optional custom slug (alphanumeric + hyphens, no leading/trailing hyphens)",
-    )
-    expires_at: datetime | None = Field(
-        None, description="Optional expiry in ISO 8601 format; null means never expires"
-    )
-
-    @field_validator("expires_at")
-    @classmethod
-    def expiry_must_be_future(cls, v: datetime | None) -> datetime | None:
-        if v is not None and v <= datetime.now(tz=v.tzinfo):
-            raise ValueError("expires_at must be in the future")
-        return v
-
-
-class URLResponse(BaseModel):
-    id: str
-    short_code: str
-    short_url: str = Field(..., description="Fully-qualified short URL including base domain")
-    original_url: str
-    click_count: int
-    expires_at: datetime | None
-    created_at: datetime
-    is_active: bool
-
-    model_config = {"from_attributes": True}
-
-
-class UpdateURLRequest(BaseModel):
-    original_url: HttpUrl | None = Field(None, description="New destination URL")
-    expires_at: datetime | None = Field(None, description="New expiry datetime; null removes expiry")
-
-    @field_validator("expires_at")
-    @classmethod
-    def expiry_must_be_future(cls, v: datetime | None) -> datetime | None:
-        if v is not None and v <= datetime.now(tz=v.tzinfo):
-            raise ValueError("expires_at must be in the future")
-        return v
-
-
-class URLListResponse(BaseModel):
-    items: list[URLResponse]
-    total: int
-    page: int
-    limit: int
+        description="Optional custom...
