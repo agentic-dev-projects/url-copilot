@@ -25,27 +25,27 @@ docker-compose up -d db cache
 
 ---
 
-## Users and Tokens
+## Roles and Tokens
 
-| Token | User | Role | What they can do |
-|---|---|---|---|
-| `alice_dev_token` | alice | DEVELOPER | Submit runs |
-| `bob_tl_token` | bob | TECH_LEAD | Approve architecture gate |
-| `carol_rm_token` | carol | RELEASE_MANAGER | Approve tests, PR, and release gates |
+| Token | Role | What they can do |
+|---|---|---|
+| `alice_dev_token` | DEVELOPER | Submit runs |
+| `bob_tl_token` | TECH_LEAD | Approve architecture gate |
+| `carol_rm_token` | RELEASE_MANAGER | Approve tests, PR, and release gates |
 
-> The four-eyes rule is enforced: alice cannot approve her own run.
+> The four-eyes rule is enforced: the DEVELOPER who submitted the run cannot approve their own gates.
 
 ---
 
 ## Pipeline Overview
 
 ```
-Alice submits requirement
+DEVELOPER submits requirement
         │
         ▼
 requirements_analysis ──► architecture_design
                                     │
-                          ⏸ GATE 1: architecture_gate  ← Bob approves
+                          ⏸ GATE 1: architecture_gate  ← TECH_LEAD approves
                                     │
                ┌────────────────────┴──────────────────┐
      implementation_plan                           test_plan
@@ -61,13 +61,13 @@ requirements_analysis ──► architecture_design
                                     │
                              documentation
                                     │
-                          ⏸ GATE 2: tests_gate  ← Carol approves
+                          ⏸ GATE 2: tests_gate   ← RELEASE_MANAGER approves
                                     │
-                          ⏸ GATE 3: pr_gate     ← Carol approves
+                          ⏸ GATE 3: pr_gate      ← RELEASE_MANAGER approves
                                     │
                           release_readiness
                                     │
-                          ⏸ GATE 4: release_gate ← Carol approves
+                          ⏸ GATE 4: release_gate ← RELEASE_MANAGER approves
                                     │
                                COMPLETED
 ```
@@ -78,18 +78,20 @@ Total: **9 stages**, **4 gates**, run in a single terminal session across multip
 
 ## Step-by-Step
 
-### Step 1 — Alice submits the requirement
+### Step 1 — DEVELOPER submits the requirement
 
 ```bash
 python -m orchestrator.run run "Add QR code endpoint GET /api/v1/urls/{id}/qr" --token alice_dev_token
 ```
 
 **What it does:**
-- Authenticates alice as DEVELOPER
+- Authenticates the token and verifies the DEVELOPER role has `trigger_run` permission
 - Classifies the requirement as `greenfield`
 - Creates a run record in the database and assigns a run ID
 - Runs `requirements_analysis` then `architecture_design` automatically
 - Pauses at `architecture_gate` waiting for a TECH_LEAD to approve
+
+> **Next approver: TECH_LEAD** — use `bob_tl_token`
 
 **Expected output:**
 ```
@@ -109,16 +111,17 @@ To continue:
 
 ---
 
-### Step 2 — Bob reviews and approves the architecture gate
+### Step 2 — TECH_LEAD approves the architecture gate
 
 ```bash
 python -m orchestrator.run approve --run-id orch-<id> --token bob_tl_token
 ```
 
 **What it does:**
-- Authenticates bob as TECH_LEAD
-- Displays the `requirements_analysis` and `architecture_design` artifacts from the run
-- Prompts bob for an optional comment and a yes/no approval decision
+- Authenticates the token and verifies the TECH_LEAD role has `approve_architecture` permission
+- Enforces the four-eyes rule: the approver must not be the same user who submitted the run
+- Displays the `requirements_analysis` and `architecture_design` artifacts for review
+- Prompts for an optional comment and a yes/no approval decision
 - If approved: resumes the pipeline
 
 **Expected output:**
@@ -174,16 +177,18 @@ To continue:
   python -m orchestrator.run approve --run-id orch-<id> --token <approver_token>
 ```
 
+> **Next approver: RELEASE_MANAGER** — use `carol_rm_token`
+
 ---
 
-### Step 3 — Carol approves the tests gate
+### Step 3 — RELEASE_MANAGER approves the tests gate
 
 ```bash
 python -m orchestrator.run approve --run-id orch-<id> --token carol_rm_token
 ```
 
 **What it does:**
-- Authenticates carol as RELEASE_MANAGER
+- Authenticates the token and verifies the RELEASE_MANAGER role has `approve_architecture` permission
 - Displays the `unit_tests` and `integration_tests` artifacts — test counts, pass/fail results, gaps identified, and any new test files written
 - Prompts for approval
 
@@ -227,9 +232,11 @@ Pipeline paused at next gate: pr_gate
 
 > No stages run between `tests_gate` and `pr_gate` — the pipeline immediately pauses again.
 
+> **Next approver: RELEASE_MANAGER** — use `carol_rm_token`
+
 ---
 
-### Step 4 — Carol approves the PR gate
+### Step 4 — RELEASE_MANAGER approves the PR gate
 
 ```bash
 python -m orchestrator.run approve --run-id orch-<id> --token carol_rm_token
@@ -237,7 +244,7 @@ python -m orchestrator.run approve --run-id orch-<id> --token carol_rm_token
 
 **What it does:**
 - Displays the `implementation` and `documentation` artifacts — the PR URL, branch name, files written, test results from the implementation stage, and documentation changes
-- This is the code review checkpoint: carol verifies the PR was created and the implementation looks correct before proceeding to release readiness
+- This is the code review checkpoint: the RELEASE_MANAGER verifies the PR was created and the implementation looks correct before proceeding to release readiness
 
 **Expected output:**
 ```
@@ -286,9 +293,11 @@ Approved by carol. Resuming pipeline...
 - `release_readiness` runs — checks tests, auth enforcement, no debug code, documentation, architecture alignment
 - Pipeline pauses at `release_gate`
 
+> **Next approver: RELEASE_MANAGER** — use `carol_rm_token`
+
 ---
 
-### Step 5 — Carol approves the release gate
+### Step 5 — RELEASE_MANAGER approves the release gate
 
 ```bash
 python -m orchestrator.run approve --run-id orch-<id> --token carol_rm_token
@@ -346,6 +355,8 @@ How satisfied are you with this run's output?
 Score [1-4] (or press Enter to skip):
 ```
 
+> **No further approvals needed** — the run is complete.
+
 ---
 
 ### Step 6 — (Optional) Check status at any point
@@ -368,6 +379,142 @@ python -m orchestrator.run review --token bob_tl_token
 
 ---
 
+## Stage Reference
+
+Each stage is an LLM agent call. The agent reads the codebase, calls tools, and produces a
+structured output artifact that is stored in the database and shown at the next gate.
+
+---
+
+### 1. requirements_analysis
+
+**Runs automatically after:** run is submitted  
+**Purpose:** Parse the requirement, identify what is in scope, flag ambiguities, and estimate complexity.
+
+The agent reads the requirement text and produces a structured artifact covering: in-scope work,
+out-of-scope work, affected files, open questions, whether a schema change is likely, and a
+one-sentence scoped requirement statement.
+
+If the requirement is too ambiguous to proceed (e.g. contradictory constraints, missing critical
+context), the agent triggers a clarification loop before continuing.
+
+---
+
+### 2. architecture_design
+
+**Runs automatically after:** requirements_analysis  
+**Purpose:** Design the technical approach — what files to create or modify, what the new endpoint
+looks like, what response schema is needed, and whether a DB migration is required.
+
+The agent uses `read_file` and `search_codebase` to understand existing patterns in the codebase
+before proposing anything. The output covers: new endpoints, service changes, new files needed,
+schema change flag, risks, and assumptions.
+
+> ⏸ **Pauses here** — TECH_LEAD reviews and approves before any code is written.
+
+---
+
+### 3. implementation_plan _(runs in parallel with test_plan)_
+
+**Runs automatically after:** architecture_gate approval  
+**Purpose:** Break the architecture design into ordered implementation tasks — which files to
+write, in what order, and what each file should contain.
+
+The output is a task list that the implementation stage follows. Running this in parallel with
+`test_plan` saves time since neither depends on the other.
+
+---
+
+### 4. test_plan _(runs in parallel with implementation_plan)_
+
+**Runs automatically after:** architecture_gate approval  
+**Purpose:** Define what unit and integration tests need to be written to verify the feature.
+
+The output lists specific test cases by name, the files they go in, and what each test asserts.
+This plan is fed into the `unit_tests` and `integration_tests` stages later.
+
+---
+
+### 5. implementation
+
+**Runs automatically after:** implementation_plan and test_plan both complete  
+**Purpose:** Write the code, verify it works, and push it to GitHub.
+
+This is the most complex stage. The agent:
+1. Calls `create_branch` to create a feature branch from `main` on GitHub
+2. Calls `read_file` / `search_codebase` to understand existing code patterns
+3. Calls `write_file` to write the implementation to the local filesystem
+4. Calls `run_tests` to verify all tests pass locally before committing
+5. Calls `commit_and_push` to stage, commit, and push the changes to the remote feature branch
+6. Calls `create_pr` to open a pull request on GitHub (feature branch → main)
+
+The output artifact contains: branch name, PR URL, PR number, files written, and test results.
+
+---
+
+### 6. unit_tests _(runs in parallel with integration_tests)_
+
+**Runs automatically after:** implementation  
+**Purpose:** Write and run unit tests for the new feature.
+
+The agent reads the test plan, reads the implementation, writes unit test files, and runs the
+full test suite. The output reports: test count, pass/fail results, coverage gaps, and which
+files were written.
+
+---
+
+### 7. integration_tests _(runs in parallel with unit_tests)_
+
+**Runs automatically after:** implementation  
+**Purpose:** Write and run integration tests that exercise the new endpoint end-to-end through
+the full HTTP stack (auth → route → service → DB).
+
+Same flow as unit_tests but focused on API-level behaviour. Tests register a user, create data,
+call the new endpoint, and assert on the HTTP response.
+
+---
+
+### 8. documentation
+
+**Runs automatically after:** unit_tests and integration_tests both complete  
+**Purpose:** Add or update docstrings for all new and modified functions, and update any relevant
+route documentation.
+
+The agent reads the implemented files and writes inline documentation. No new files are created —
+only existing files are updated.
+
+> ⏸ **Pauses at tests_gate** — RELEASE_MANAGER reviews test results before proceeding.  
+> ⏸ **Pauses immediately at pr_gate** — RELEASE_MANAGER reviews the implementation and PR.
+
+---
+
+### 9. release_readiness
+
+**Runs automatically after:** pr_gate approval  
+**Purpose:** Perform a final automated quality check against a standardised checklist.
+
+The agent reads the codebase and checks every item on the release checklist:
+
+| Check | What it verifies |
+|---|---|
+| `tests_pass` | No failing tests in the suite |
+| `auth_enforced` | New endpoints require authentication |
+| `no_debug_code` | No `print`, `pdb`, or hardcoded debug flags |
+| `endpoints_documented` | All new routes have docstrings |
+| `matches_architecture` | Implementation matches the approved architecture design |
+| `migration_reversible` | Any DB migration can be rolled back (N/A if no migration) |
+| `no_hardcoded_secrets` | No API keys or passwords in source files |
+| `soft_delete_followed` | Deletions use `is_active = False`, not hard deletes |
+| `dependencies_declared` | New libraries added to `requirements.txt` |
+| `error_handling_present` | New endpoints return proper 4xx/5xx responses |
+
+The output states whether the feature is **READY TO SHIP** and lists any blockers or warnings.
+
+> ⏸ **Pauses at release_gate** — RELEASE_MANAGER gives final sign-off.  
+> After approval the run is marked **COMPLETED**.
+
+---
+
 ## What to Verify After the Run
 
 | Check | Where to look |
@@ -386,8 +533,8 @@ python -m orchestrator.run review --token bob_tl_token
 **`ERROR: DATABASE_URL is not set`**
 — PostgreSQL is not running or `.env` is missing. Run `docker-compose up -d db` and check `.env`.
 
-**`Daily token budget exceeded for 'alice'`**
-— Alice's daily token budget (DEVELOPER role) is exhausted. Budget resets at midnight UTC.
+**`Daily token budget exceeded`**
+— The DEVELOPER role's daily token budget is exhausted. Budget resets at midnight UTC.
 Increase the limit in `orchestrator/config/rbac.yaml` under `DEVELOPER.daily_token_budget` if needed.
 
 **`WRITE_FILE_REQUIRED: Nothing is staged under service/`**
@@ -400,5 +547,5 @@ reads the codebase and concludes the feature already exists locally. Ensure `ser
 `os.path.join(os.path.dirname(__file__), "..", "..")` (two levels up, not three) for `repo_root`.
 
 **PR creation fails with GitHub 422**
-— The feature branch has no commits (commit_and_push failed silently before this). Check the
+— The feature branch has no commits (commit_and_push failed before this). Check
 `orchestrator_app.log` for the root cause, fix it, and run again.
