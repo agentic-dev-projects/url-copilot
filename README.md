@@ -211,6 +211,7 @@ See [docs/TESTING.md](docs/TESTING.md) for the full testing guide.
 
 | Doc | What it covers |
 |---|---|
+| [ENGINEERING_SUMMARY.md](docs/ENGINEERING_SUMMARY.md) | Plan/rationale, artifacts, risks/trade-offs, assumptions, limitations |
 | [QUICK_START.md](docs/QUICK_START.md) | Prerequisites, roles, all CLI commands |
 | [GATES.md](docs/GATES.md) | Gate details, RBAC, four-eyes rule |
 | [ROADMAP.md](docs/ROADMAP.md) | Planned improvements and future features |
