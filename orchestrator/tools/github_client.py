@@ -130,7 +130,7 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
         RuntimeError: if any git step fails.
     """
     repo_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..")
+        os.path.join(os.path.dirname(__file__), "..", "..")
     )
 
     def _run(cmd: list[str]) -> str:
