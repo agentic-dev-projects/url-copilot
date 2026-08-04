@@ -8,7 +8,7 @@ tests (unit + integration combined), and release readiness — before the human
 approval gate.  A second AI model (o1-mini, a reasoning model) independently
 reviews the doer agent's output and produces a structured critique.  The human
 reviewer then sees both the AI evaluation and the stage artifact, adds their
-comment, and the combined HybridFeedback is stored in RunContext.stage_evaluations
+comment, and the combined HybridFeedback is stored in OrchestratorState["stage_evaluations"]
 and injected into all downstream stage prompts via Prompt Builder Layer 4.
 
 Why a second model?
