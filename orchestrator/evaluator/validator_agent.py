@@ -40,6 +40,7 @@ from typing import Any, Protocol
 
 from orchestrator.core.state import OrchestratorState
 from orchestrator.evaluator.evaluation_report import EvaluationReport
+from orchestrator.gateway.models import GatewayRequest, GatewayResponse
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -47,22 +48,13 @@ _VALID_RECOMMENDATIONS = {"APPROVE", "APPROVE_WITH_NOTES", "REJECT"}
 
 
 class _GatewayCallable(Protocol):
-    """Minimal interface ValidatorAgent needs from AIGateway (implemented Phase 7).
+    """Minimal interface ValidatorAgent needs from AIGateway (Phase 7).
 
-    The real AIGateway.call() accepts a GatewayRequest dataclass; this Protocol
-    captures only the keyword arguments ValidatorAgent passes so the two can evolve
-    independently until Phase 7 wires them together.
+    Now that AIGateway is built, this Protocol mirrors its actual call() signature
+    so that any object satisfying it (real AIGateway, or a test mock) works here.
     """
 
-    def call(  # noqa: D102
-        self,
-        *,
-        model: str,
-        messages: list[dict],
-        run_id: str,
-        stage_name: str,
-        token: str,
-    ) -> str: ...
+    def call(self, request: GatewayRequest) -> GatewayResponse: ...
 
 
 class ValidatorAgent:
@@ -121,13 +113,17 @@ class ValidatorAgent:
             details={"stage_name": stage_name, "model": self.validator_model},
         )
 
-        raw_response: str = self.gateway.call(
-            model=self.validator_model,
-            messages=messages,
-            run_id=state["run_id"],
-            stage_name=f"eval_{stage_name}",
-            token=state.get("triggered_by", ""),
+        response: GatewayResponse = self.gateway.call(
+            GatewayRequest(
+                token=state.get("triggered_by", ""),
+                run_id=state["run_id"],
+                stage_name=f"eval_{stage_name}",
+                messages=messages,
+                model=self.validator_model,
+                prompt_version=f"eval_{stage_name}_v1",
+            )
         )
+        raw_response: str = response.content or ""
 
         report = self._parse_response(stage_name, raw_response)
 

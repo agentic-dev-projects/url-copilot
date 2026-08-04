@@ -386,7 +386,7 @@ satisfies SOC2 CC7.2.
 ---
 
 ### Phase 7 — Gateway: Full Pipeline
-**Status**: ❌ TODO
+**Status**: ✅ COMPLETE
 **Builds the complete 11-layer pre/post-call pipeline.**
 
 Files to create (implement in this order):
@@ -1001,7 +1001,7 @@ LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 | 4 | State store (RunStateStore — orch_runs + orch_stage_results) | ✅ |
 | 5 | Audit logger (AuditLogger + EventType — append-only orch_audit_events) | ✅ |
 | 6 | Gateway: auth + RBAC checkpoint (TokenAuthenticator, RBACCheckpoint, four-eyes) | ✅ |
-| 7 | Gateway: full pipeline | ❌ |
+| 7 | Gateway: full pipeline (11-step pipeline, wrap_openai LangSmith tracing) | ✅ |
 | 8 | Memory system | ❌ |
 | 9 | Cache (response + tool) | ❌ |
 | 10 | Tool registry | ❌ |
