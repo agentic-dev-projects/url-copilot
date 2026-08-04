@@ -177,17 +177,11 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
     short_sha = _run(["git", "rev-parse", "--short", "HEAD"])
     _log.info("commit_and_push: pushed sha=%s to %s", short_sha, branch_name)
 
-    # Clean up: undo the local commit so the next run starts from a clean state.
-    # --mixed keeps files in the working tree but unstages them.
-    _log.info("commit_and_push: cleaning up local state")
+    # Undo the local commit so local main stays in sync with remote main.
+    # --mixed keeps the written files in the working tree (unstaged) so that
+    # subsequent stages in THIS run (tests, release_readiness) can still read them.
+    # Cleanup of local service/ happens at the start of the next run (see run.py).
     _run(["git", "reset", "--mixed", "HEAD~1"])
-    # Restore tracked files under service/ to HEAD state (discard LLM's edits locally)
-    _run(["git", "checkout", "HEAD", "--", "service/"])
-    # Remove any new untracked files the LLM created under service/
-    subprocess.run(
-        ["git", "clean", "-fd", "service/"],
-        cwd=repo_root, capture_output=True,
-    )
     _log.info("commit_and_push: done — remote branch %s has new commits", branch_name)
 
     return f"Committed and pushed to {branch_name}: {short_sha}"

@@ -179,6 +179,15 @@ def handle_run(requirement: str, token: str) -> None:
     from orchestrator.tools.registry import ToolRegistry
     from service.db.session import SessionLocal
 
+    # Reset local service/ to the committed main state before starting a new run.
+    # A previous run leaves the LLM's files unstaged in the working tree after
+    # commit_and_push does git-reset --mixed. Cleaning here means each run starts
+    # from a pristine baseline and the LLM always has to implement from scratch.
+    import subprocess as _sp
+    _repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    _sp.run(["git", "checkout", "HEAD", "--", "service/"], cwd=_repo_root, capture_output=True)
+    _sp.run(["git", "clean", "-fd", "service/"], cwd=_repo_root, capture_output=True)
+
     session = SessionLocal()
     log: PipelineLogger | None = None
     t_run_start = 0.0
