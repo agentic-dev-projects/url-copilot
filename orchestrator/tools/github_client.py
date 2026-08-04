@@ -61,6 +61,8 @@ def _repo():
 def create_branch(branch_name: str, from_branch: str = _DEFAULT_BASE_BRANCH) -> str:
     """Create a new git branch from from_branch and return the branch ref URL.
 
+    Idempotent: if the branch already exists, returns the URL without error.
+
     Args:
         branch_name: Name for the new branch (e.g. "feature/add-qr-endpoint").
         from_branch: Branch to fork from (default "main").
@@ -70,15 +72,21 @@ def create_branch(branch_name: str, from_branch: str = _DEFAULT_BASE_BRANCH) -> 
         (e.g. "https://github.com/org/repo/tree/feature/add-qr-endpoint").
 
     Raises:
-        GithubException: if the branch already exists or the API call fails.
+        GithubException: if the API call fails for any reason other than the
+            branch already existing.
         EnvironmentError: if GITHUB_TOKEN or GITHUB_REPO are not set.
     """
     repo = _repo()
     source = repo.get_branch(from_branch)
-    ref = repo.create_git_ref(
-        ref=f"refs/heads/{branch_name}",
-        sha=source.commit.sha,
-    )
+    try:
+        repo.create_git_ref(
+            ref=f"refs/heads/{branch_name}",
+            sha=source.commit.sha,
+        )
+    except GithubException as exc:
+        # 422 = branch already exists — treat as success
+        if exc.status != 422:
+            raise
     return f"https://github.com/{repo.full_name}/tree/{branch_name}"
 
 

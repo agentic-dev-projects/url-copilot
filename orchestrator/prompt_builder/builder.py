@@ -225,9 +225,11 @@ class PromptBuilder:
     def _build_instruction(self, stage_name: str, state: OrchestratorState) -> str:
         """Build Layer 7 — the specific instruction for this stage and run.
 
-        run_id and triggered_by are intentionally excluded — they are
-        operational metadata that the LLM never uses, and including them
-        would produce a unique cache key on every run, defeating the cache.
+        run_id is excluded from most stages — it would produce a unique cache key
+        on every run, defeating the response cache.  Exception: implementation stage
+        includes the run_id so the LLM can embed it in the branch name, ensuring
+        uniqueness across runs.  Implementation is never cache-worthy anyway since
+        the codebase changes between runs.
         """
         requirement = state.get("resolved_requirement") or state.get("requirement", "")
         scenario = state.get("scenario_type", "unknown")
@@ -246,6 +248,16 @@ class PromptBuilder:
             lines.append("\n**Clarified assumptions**:")
             for a in assumptions:
                 lines.append(f"- {a}")
+
+        # Include run_id for implementation so the LLM generates a unique branch name.
+        if stage_name == "implementation":
+            run_id = state.get("run_id", "")
+            short_id = run_id.replace("orch-", "")[:8] if run_id else "local"
+            lines.append(
+                f"\n**Run ID suffix for branch naming**: `{short_id}`"
+                f"\nName your branch: `feature/<slug>-{short_id}` "
+                f"(e.g. `feature/add-qr-endpoint-{short_id}`)."
+            )
 
         lines.append(
             f"\nProduce the {stage_name.replace('_', ' ')} output now. "
