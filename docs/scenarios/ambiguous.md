@@ -1,558 +1,463 @@
 # Scenario 3 — Ambiguous
-## "Make the service production-ready"
 
-**Scenario type**: Ambiguous — requirement has 7+ valid interpretations. The agent must NOT guess. It reads the codebase, maps gaps against existing NFRs, and asks targeted questions before building any plan.
+An ambiguous run handles requirements that are too vague, contradictory, or under-specified
+to classify as greenfield or brownfield. Before the pipeline starts, the orchestrator runs
+a **clarification loop** — the LLM asks up to 4 targeted questions in the terminal, the
+DEVELOPER answers them, and the orchestrator synthesises a single unambiguous resolved
+requirement. The full 9-stage pipeline then runs on that resolved requirement.
 
-**What this scenario demonstrates**:
-- Ambiguity detection: agent identifies requirement is too broad before any SDLC stage runs
-- Codebase-grounded questions: agent reads `docs/design.md` NFR section and maps what's done vs missing
-- Targeted clarification loop: questions are specific and contextual — not generic "what do you mean?"
-- Scope negotiation: agent proposes 3 focused changes from a potential list of 7
-- Assumption documentation: every assumption is surfaced and confirmed before coding begins
-- All assumptions saved to memory for future runs
-- Dynamic DAG: requirements stage expands into a clarification sub-loop unique to this scenario type
+The key difference from greenfield and brownfield: **clarification happens before Stage 1**,
+and the pipeline runs with `resolved_requirement` (the scoped version) rather than the
+original vague input.
 
 ---
 
-## CLI Command
+## Prerequisites and Roles
+
+See [Quick Start](../QUICK_START.md) for prerequisites, role tokens, and all CLI commands.
+
+---
+
+## Pipeline Overview
+
+```mermaid
+flowchart TD
+    SUBMIT([DEVELOPER submits vague requirement]) --> CL
+    subgraph CL[Clarification Loop — before any stage]
+        Q[LLM generates up to 4 questions] --> A[DEVELOPER answers in terminal]
+        A --> R[LLM synthesises resolved_requirement]
+    end
+    CL --> RA[requirements_analysis\nuses resolved_requirement]
+    RA --> AD[architecture_design]
+    AD --> G1{⏸ architecture_gate\nTECH_LEAD}
+    G1 --> IP[implementation_plan]
+    G1 --> TP[test_plan]
+    IP --> IMPL[implementation\nbranch · code · PR]
+    TP --> IMPL
+    IMPL --> UT[unit_tests]
+    IMPL --> IT[integration_tests]
+    UT --> DOC[documentation]
+    IT --> DOC
+    DOC --> G2{⏸ tests_gate\nTECH_LEAD}
+    G2 --> G3{⏸ pr_gate\nRELEASE_MANAGER}
+    G3 --> RR[release_readiness]
+    RR --> G4{⏸ release_gate\nRELEASE_MANAGER}
+    G4 --> DONE([COMPLETED])
+```
+
+Total: **clarification loop + 9 stages + 4 gates**.
+
+---
+
+## Approval Gates
+
+See [Gates Reference](../GATES.md) for full details on all four gates, the RBAC permission matrix, and the four-eyes rule.
+
+| Gate | Approver role |
+|---|---|
+| `architecture_gate` | TECH_LEAD |
+| `tests_gate` | TECH_LEAD |
+| `pr_gate` | RELEASE_MANAGER |
+| `release_gate` | RELEASE_MANAGER |
+
+---
+
+## What Makes a Requirement "Ambiguous"
+
+The classifier routes to ambiguous when the requirement:
+- Is too vague to determine scope ("improve the URL shortener")
+- Uses undefined terms that could mean very different things ("add team support", "add smart redirects")
+- Mixes greenfield and brownfield concerns in the same request
+- Is missing critical details needed to choose an implementation approach
+
+**Example requirements that trigger ambiguous:**
+```bash
+"Make the URL shortener more enterprise-friendly"
+"Add team workspace features"
+"Add notifications for URL activity"
+```
+
+---
+
+## Step-by-Step
+
+### Step 1 — DEVELOPER submits the requirement
 
 ```bash
-python -m orchestrator.run \
-  "Make the service production-ready" \
-  --token alice_dev_token
+python -m orchestrator.run run "Make the URL shortener more enterprise-friendly" --token alice_dev_token
 ```
 
-**Planner**:
+**What it does:**
+- Authenticates the token and verifies the DEVELOPER role has `trigger_run` permission
+- Classifier detects the requirement is too vague to route — returns `ambiguous`
+- **Clarification loop fires immediately** — before any pipeline stage runs
+- The LLM generates up to 4 targeted questions about scope and intent
+- Each question appears in the terminal; the DEVELOPER types an answer
+- After all answers, the LLM synthesises a single `resolved_requirement`
+- A run record is created and the full 9-stage pipeline starts on the resolved requirement
+- Pauses at `architecture_gate`
+
+**Expected output:**
 ```
-Attempts classification: HIGH AMBIGUITY detected
-  "production-ready" has no single technical definition
-  Selects: AmbiguousScenario DAG
-  Creates run: orch-ambig-003
-  Enters: CLARIFICATION MODE (before any SDLC stage runs)
+Clarification needed:
+  What specific aspect of "enterprise-friendly" are you targeting — security
+  and compliance (audit logs, SSO), operational concerns (monitoring, SLAs),
+  team collaboration (shared URLs, RBAC), or something else?
+Your answer: team collaboration — shared URL lists and role-based access
+
+Clarification needed:
+  Should team members share a single API key, or should each member have
+  their own key with access scoped to their team's URLs?
+Your answer: each member has their own key, scoped to the team
+
+Clarification needed:
+  Should existing URLs created before teams existed be migrated to a default
+  team, or remain as personal URLs?
+Your answer: remain as personal, no migration needed
+
+Run ID:   orch-<8-char-hex>
+Scenario: ambiguous
+
+Starting pipeline for run orch-<id>...
+
+Pipeline paused — waiting for gate approval.
+
+  Run ID : orch-<id>
+  Gate   : architecture_gate  (requires: approve_architecture)
+
+Next steps:
+  # Approver — see all pending reviews:
+  python -m orchestrator.run review --token <approver_token>
+
+  # Approver — approve this specific run:
+  python -m orchestrator.run approve --run-id orch-<id> --token <approver_token>
+
+  # Check current status and per-stage metrics:
+  python -m orchestrator.run status --run-id orch-<id> --token <your_token>
 ```
+
+> **Run ID appears after answering all questions** — the clarification loop runs before the run record is created.
+
+> **Save the Run ID** — you will pass it to every subsequent `approve` command.
+
+> **Next approver: TECH_LEAD** — use `bob_tl_token`
 
 ---
 
-## DAG Execution Trace
+### Step 2 — TECH_LEAD approves the architecture gate
 
-```
-CLARIFICATION LOOP  ← unique to ambiguous scenario
-  ├── Codebase analysis
-  ├── Question Round 1 (4 questions)
-  ├── Scope narrowing
-  └── Assumption confirmation
-        │
-        ▼ (requirements now unambiguous)
-REQUIREMENTS_ANALYSIS         [COMPLETED]
-        │
-ARCHITECTURE_DESIGN           [COMPLETED → 🔐 Gate #1]
-        │
-        ├───────────────────────────────────────────────────┐
-IMPLEMENTATION_PLAN [COMPLETED]              TEST_PLAN [COMPLETED]  (parallel)
-        └──────────────────────┬────────────────────────────┘
-                               │ sync point
-                        IMPLEMENTATION           [COMPLETED → Gate #2 SKIPPED]
-                               │
-              ┌────────────────┴──────────────────┐
-         UNIT_TESTS [COMPLETED]   INTEGRATION_TESTS [COMPLETED]  (parallel)
-              └────────────────┬──────────────────┘
-                               │ sync point
-                        DOCUMENTATION            [COMPLETED]
-                               │
-                         🔐 GitHub PR → TECH_LEAD merges
-                               │
-                       RELEASE_READINESS         [COMPLETED → 🔐 Gate #4]
-                               │
-                          User Feedback
+```bash
+python -m orchestrator.run approve --run-id orch-<id> --token bob_tl_token
 ```
 
----
+**What it does:**
+- Displays the `requirements_analysis` and `architecture_design` artifacts
+- The `requirements_analysis` artifact shows **both the original vague requirement and the resolved requirement** — the TECH_LEAD can verify the scope is correct before any code is written
+- The assumptions list from the clarification loop is also shown
 
-## Clarification Loop — Detailed Flow
-
-### Step 1: Agent Reads Entire Codebase Against NFRs
-
-Before asking a single question, the agent reads the codebase and maps it against
-the existing NFRs documented in `docs/design.md` section 2.
-
-**Tools called**:
+**Expected output:**
 ```
-read_file("docs/design.md")                       ← read NFR section (2.1-2.6)
-read_file("service/main.py")                      ← check middleware
-read_file("service/config.py")                    ← check settings
-read_file("service/core/rate_limiter.py")         ← verify rate limiting
-read_file("service/db/session.py")                ← verify connection pooling
-search_codebase("logging")                        ← check logging setup
-search_codebase("metrics")                        ← check metrics setup
-search_codebase("request_id")                     ← check request ID propagation
-search_codebase("CORSMiddleware")                 ← check CORS config
-```
+Authenticated as: bob
+Run ID     : orch-<id>
+Gate       : architecture_gate
+Submitted by: alice
 
-**Internal analysis**:
-```
-NFR Status Map:
+Requirement: Make the URL shortener more enterprise-friendly
 
-  ✓ NFR-10: API keys hashed SHA-256, never plaintext          → DONE
-  ✓ NFR-11: Input validation via Pydantic schemas             → DONE
-  ✓ NFR-12: IP hashes for PII compliance in analytics        → DONE
-  ✓ NFR-05: No data loss — soft deletes, no hard deletes      → DONE
-  ✓ NFR-08: Horizontal scale — stateless handlers             → DONE
-  ✓ NFR-09: Analytics decoupled from redirect path            → DONE (graceful degradation)
-  ✓ NFR-17: Modular codebase — api/services/models layers    → DONE
-  ✓ NFR-19: Rate limiting per API key                        → DONE
-  ✓ NFR-20: Integration tests cover user journeys            → DONE (45 tests)
+============================================================
 
-  ✗ NFR-14: Structured logs with request_id                   → NOT IMPLEMENTED
-             (logging module not imported anywhere in main.py)
-  ✗ NFR-15: Metrics endpoint (request rate, error rate)       → NOT IMPLEMENTED
-             (no /metrics route, no instrumentation)
-  ✗ NFR-16: Readiness probe                                   → PARTIAL
-             (/health exists but returns static JSON, no DB/Redis check)
-  ✗ NFR-01: Redirect p99 < 100ms                             → AT RISK
-             (no Redis cache on redirect path)
-  ✗ NFR-13: HTTPS enforced                                    → NOT ENFORCED
-             (CORSMiddleware allow_origins=["*"] — no origin restriction)
+  ────────────────────────────────────────────────────────
+  REQUIREMENTS ANALYSIS
+  ────────────────────────────────────────────────────────
 
-  Additional gaps (not in NFR doc):
-  - No CI/CD pipeline
-  - No graceful shutdown handler
-  - No readiness probe distinguishing DB-down vs app-down
-```
+  ORIGINAL REQUIREMENT:
+  Make the URL shortener more enterprise-friendly
 
-### Step 2: Clarification Round 1 — Targeted Questions
+  RESOLVED REQUIREMENT:
+  Add team-based URL sharing — a Team model with members, each with their
+  own API key scoped to the team's URLs. Existing personal URLs are not
+  migrated. No SSO or audit log changes in this scope.
 
-The questions are derived directly from the gap analysis. The agent does NOT ask generic questions.
+  ASSUMPTIONS:
+    • Each team member has their own API key scoped to the team
+    • Existing personal URLs remain personal (no migration)
+    • Team feature is new (greenfield path within ambiguous scenario)
 
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[orch-ambig-003] CLARIFICATION REQUIRED
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-I analyzed the codebase against the NFRs defined in docs/design.md.
+  AFFECTED FILES:
+    • service/models/ (new Team, TeamMember models)
+    • service/api/v1/endpoints/ (new teams endpoints)
+    • service/db/migrations/ (schema migration required)
 
-Already production-ready:
-  ✓ Auth, rate limiting, validation, connection pooling,
-    soft deletes, migration, 45 tests passing
+  SCHEMA CHANGE LIKELY: YES ⚠
 
-Unmet NFRs I found (5 gaps, 2 additional):
-  ✗ NFR-14: No structured JSON logging or request IDs
-  ✗ NFR-15: No metrics endpoint
-  ✗ NFR-16: Health check is liveness-only (no readiness)
-  ✗ NFR-01: Redirect cache not yet built (p99 at risk)
-  ✗ NFR-13: CORS allows all origins (security gap)
-  ✗ Extra: No CI/CD pipeline
-  ✗ Extra: No graceful shutdown
+  ────────────────────────────────────────────────────────
+  ARCHITECTURE DESIGN
+  ────────────────────────────────────────────────────────
 
-"Production-ready" maps to 7 different work items.
-I need 4 answers to build a focused plan.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  NEW ENDPOINTS:
+    POST /api/v1/teams          — create a team
+    GET  /api/v1/teams/{id}     — get team + members
+    POST /api/v1/teams/{id}/members — add a member
 
-Q1. What is driving "production-ready" right now?
-    [A] Upcoming compliance or security audit (SOC2, ISO 27001, PCI)
-    [B] Going live — need operational confidence before launch
-    [C] A specific incident or SLA breach drove this request
-    [D] General engineering quality improvement, no specific pressure
+  SCHEMA CHANGE REQUIRED: Yes — Team and TeamMember tables
+  ...
+============================================================
 
-Your answer: A
-```
-
-```
-Q2. You selected: compliance audit.
-    Which of these 7 gaps maps to your audit requirements?
-    (I'll research the controls — just tell me the standard)
-
-    [A] SOC2 Type II
-    [B] ISO 27001
-    [C] PCI DSS
-    [D] Internal audit (not a public standard)
-    [E] I'm not sure — pick what's most important
-
-Your answer: A
-```
-
-```
-Q3. Deployment target for this work?
-    [A] Single server with Docker Compose (current setup)
-    [B] Kubernetes
-    [C] AWS ECS / Fargate
-    [D] Not yet decided
-
-Your answer: A
-```
-
-```
-Q4. Deadline?
-    Press Enter to skip.
-
-Your answer: 2 weeks
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-### Step 3: Agent Maps Answers to SOC2 Controls
-
-```
-Mapping "SOC2 + 2 weeks + Docker Compose" to the 7 gaps:
-
-SOC2 Trust Service Criteria relevant here:
-  CC7.2 — System operations monitoring    → NFR-14 (structured logging) ← REQUIRED
-  CC7.3 — Anomaly/failure detection      → NFR-15 (metrics endpoint)   ← REQUIRED
-  CC6.1 — Logical access controls        → NFR-13 (CORS restriction)   ← REQUIRED
-  CC6.6 — Security threats prevention   → NFR-14 (audit trail)        ← covered by logging
-
-Not SOC2 blockers (defer beyond 2 weeks):
-  ✗ Redis cache (NFR-01) — performance, not audit
-  ✗ CI/CD pipeline — operational, not SOC2 control
-  ✗ Graceful shutdown — reliability, not SOC2 control
-  ✗ Readiness probe improvement — minor, not SOC2 control
-
-Scope decision: 3 changes, all SOC2-motivated.
-```
-
-### Step 4: Scope Proposal and Assumption Confirmation
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Scope confirmed for orch-ambig-003:
-
-  1. Structured JSON logging + X-Request-ID header on all requests
-     → Satisfies SOC2 CC7.2 (system monitoring)
-
-  2. GET /metrics endpoint (request rate, error rate, latency p99)
-     → Satisfies SOC2 CC7.3 (anomaly detection)
-
-  3. CORS: restrict allowed origins via ALLOWED_ORIGINS env var
-     → Satisfies SOC2 CC6.1 (access control)
-
-Deferred (documented, not abandoned):
-  - Redis cache on redirect (NFR-01) — separate backlog item
-  - CI/CD pipeline — separate backlog item
-  - Graceful shutdown — separate backlog item
-
-Before I proceed, I need to confirm 3 assumptions:
-
-  [A1] Request IDs: UUID4, added as X-Request-ID response header
-  [A2] Metrics endpoint: unauthenticated (standard for Prometheus scraping)
-  [A3] CORS: allowed origins set via comma-separated ALLOWED_ORIGINS env var
-       e.g. "https://app.example.com,https://admin.example.com"
-
-Do any assumptions need correction? [y/n]: n
-
-✓ All assumptions confirmed by alice (DEVELOPER)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Saving to memory:
-  [fact]       SOC2 audit is the compliance driver for observability work
-  [convention] Metrics endpoint must be unauthenticated for Prometheus scraping
-  [convention] CORS allowed origins controlled via ALLOWED_ORIGINS env var
-  [decision]   Request IDs: UUID4 as X-Request-ID response header
-
-Proceeding to REQUIREMENTS_ANALYSIS with resolved requirements.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
----
-
-## Stage 1 — REQUIREMENTS_ANALYSIS
-
-Requirements are now unambiguous. This stage formalizes the clarification outputs.
-
-**Output artifact**:
-```json
-{
-  "original_requirement": "Make the service production-ready",
-  "resolved_requirement": "Add structured JSON logging with X-Request-ID, a /metrics endpoint, and CORS restriction to ALLOWED_ORIGINS — all motivated by SOC2 audit (CC7.2, CC7.3, CC6.1)",
-  "scope": [
-    "Structured JSON logging + X-Request-ID header (NFR-14)",
-    "GET /metrics endpoint, unauthenticated (NFR-15)",
-    "CORS restricted to ALLOWED_ORIGINS env var (NFR-13)"
-  ],
-  "deferred": [
-    "Redis cache on redirect path (NFR-01)",
-    "CI/CD pipeline",
-    "Graceful shutdown",
-    "Readiness probe improvement"
-  ],
-  "assumptions": [
-    "Request IDs: UUID4 as X-Request-ID header",
-    "Metrics endpoint: unauthenticated",
-    "CORS origins: ALLOWED_ORIGINS env var"
-  ],
-  "compliance_driver": "SOC2 CC7.2, CC7.3, CC6.1",
-  "schema_migration": false
-}
-```
-
----
-
-## Stage 2 — ARCHITECTURE_DESIGN
-
-**Model**: gpt-4o
-**Tools called**:
-```
-read_file("service/main.py")             ← middleware setup, router registration
-read_file("service/api/deps.py")         ← request context pattern
-read_file("service/config.py")           ← settings pattern
-search_codebase("CORSMiddleware")        ← existing CORS config to modify
-search_codebase("app.add_middleware")    ← middleware registration
-```
-
-**Output artifact**:
-```json
-{
-  "change_1_logging": {
-    "new_files": ["service/core/logging.py"],
-    "modified_files": ["service/main.py"],
-    "description": "JSON log formatter with request_id field. RequestIDMiddleware generates UUID4 per request, adds X-Request-ID to response headers, injects into log context."
-  },
-  "change_2_metrics": {
-    "new_files": ["service/api/v1/endpoints/metrics.py"],
-    "modified_files": ["service/api/v1/router.py", "requirements.txt"],
-    "description": "prometheus_fastapi_instrumentator auto-instruments all routes. GET /metrics serves Prometheus scrape format. Unauthenticated (no X-API-Key required)."
-  },
-  "change_3_cors": {
-    "modified_files": ["service/main.py", "service/config.py", ".env.example"],
-    "description": "CORSMiddleware allow_origins reads from settings.allowed_origins (list parsed from ALLOWED_ORIGINS env var). Default: ['http://localhost:3000'] for local dev."
-  },
-  "schema_migration": false,
-  "new_dependencies": ["prometheus_fastapi_instrumentator==7.0.0"]
-}
-```
-
-### 🔐 Gate #1 — Architecture Approval
-
-```
+Review comment (optional, press Enter to skip): lgtm — scope is right
 Approve? [y/n]: y
-Comment: Good. Ensure request_id propagates into structured
-         log fields — not just the response header. Also make
-         sure ALLOWED_ORIGINS has a sane default for local dev.
 
-✓ Approved by bob (TECH_LEAD)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Memory saved:
-  [preference] request_id must appear in structured log fields, not just response headers (bob)
-  [convention] ALLOWED_ORIGINS must have a default for local development (bob)
+Approved by bob. Resuming pipeline...
 ```
+
+**What runs after approval:**
+- `implementation_plan` and `test_plan` run in parallel
+- `implementation` runs — creates feature branch, writes code, runs tests, commits, opens PR
+- `unit_tests` and `integration_tests` run in parallel
+- `documentation` runs
+- Pipeline pauses at `tests_gate`
+
+```
+Pipeline paused at next gate: tests_gate
+  Required permission: approve_architecture
+
+To continue:
+  python -m orchestrator.run review --token <approver_token>
+  python -m orchestrator.run approve --run-id orch-<id> --token <approver_token>
+
+To see the current status:
+  python -m orchestrator.run status --run-id orch-<id> --token <your_token>
+```
+
+> **Next approver: TECH_LEAD** — use `bob_tl_token`
 
 ---
 
-## Stages 3a + 3b — IMPLEMENTATION_PLAN + TEST_PLAN (Parallel)
+### Step 3 — TECH_LEAD approves the tests gate
 
-### Implementation Plan (3 changes as one coherent batch):
-```json
-{
-  "tasks": [
-    {"id": 1, "file": "service/core/logging.py", "action": "create",
-     "description": "JSON log formatter factory, request_id context var"},
-    {"id": 2, "file": "service/main.py", "action": "modify",
-     "description": "Add RequestIDMiddleware, configure JSON logging on startup"},
-    {"id": 3, "file": "service/api/v1/endpoints/metrics.py", "action": "create",
-     "description": "Prometheus instrumentator, GET /metrics route (no auth)"},
-    {"id": 4, "file": "service/api/v1/router.py", "action": "modify",
-     "description": "Register metrics router"},
-    {"id": 5, "file": "service/config.py", "action": "modify",
-     "description": "Add ALLOWED_ORIGINS: list[str] = ['http://localhost:3000']"},
-    {"id": 6, "file": "service/main.py", "action": "modify",
-     "description": "Update CORSMiddleware to use settings.allowed_origins"},
-    {"id": 7, "file": ".env.example", "action": "modify",
-     "description": "Document ALLOWED_ORIGINS env var"},
-    {"id": 8, "file": "requirements.txt", "action": "modify",
-     "description": "Add prometheus_fastapi_instrumentator==7.0.0"}
-  ]
-}
+```bash
+python -m orchestrator.run approve --run-id orch-<id> --token bob_tl_token
 ```
 
-### Test Plan:
-```json
-{
-  "unit_tests": [
-    "test_request_id_in_response_header: every response has X-Request-ID header",
-    "test_request_ids_unique: two requests get different IDs",
-    "test_request_id_in_log_output: log entry contains request_id field"
-  ],
-  "integration_tests": [
-    "test_metrics_endpoint_returns_200: GET /metrics → 200 without API key",
-    "test_metrics_endpoint_no_auth_required: GET /metrics without X-API-Key → 200 (not 401)",
-    "test_metrics_contains_request_counter: response body contains http_requests_total",
-    "test_cors_allows_configured_origin: request with ALLOWED_ORIGINS header → 200",
-    "test_cors_blocks_unconfigured_origin: request with unknown origin → 403"
-  ],
-  "regression": "All 45 existing tests must still pass"
-}
+**What it does:**
+- Displays `unit_tests` and `integration_tests` artifacts
+- Prompts for approval
+
+**Expected output:**
 ```
+Authenticated as: bob
+Gate       : tests_gate
+
+  ────────────────────────────────────────────────────────
+  UNIT TESTS
+  ────────────────────────────────────────────────────────
+
+  TEST RESULTS:
+    failed: 0
+    passed: 41
+    success: True
+
+  TEST FILES WRITTEN:
+    • service/tests/unit/test_team_service.py
+
+  ────────────────────────────────────────────────────────
+  INTEGRATION TESTS
+  ────────────────────────────────────────────────────────
+
+  TEST RESULTS:
+    failed: 0
+    passed: 3
+    success: True
+
+  TEST FILES WRITTEN:
+    • service/tests/integration/test_teams.py
+============================================================
+
+Review comment (optional, press Enter to skip): lgtm
+Approve? [y/n]: y
+
+Approved by bob. Resuming pipeline...
+
+Pipeline paused at next gate: pr_gate
+```
+
+> No stages run between `tests_gate` and `pr_gate` — the pipeline immediately pauses again.
+
+> **Next approver: RELEASE_MANAGER** — use `carol_rm_token`
 
 ---
 
-## Stage 4 — IMPLEMENTATION
+### Step 4 — RELEASE_MANAGER approves the PR gate
 
-**Model**: gpt-4o
-**Branch**: `orch/feature/prod-ready-orch-ambig-003`
-
-**Tools called**:
-```
-create_branch("orch/feature/prod-ready-orch-ambig-003")
-read_file("service/main.py")
-write_file("service/core/logging.py")            ← new JSON logger
-write_file("service/main.py")                    ← middleware + logging
-write_file("service/api/v1/endpoints/metrics.py") ← Prometheus endpoint
-write_file("service/api/v1/router.py")           ← register metrics
-write_file("service/config.py")                  ← ALLOWED_ORIGINS
-write_file(".env.example")                       ← document ALLOWED_ORIGINS
-write_file("requirements.txt")                   ← add instrumentator
-run_linter()                                     → PASSED
+```bash
+python -m orchestrator.run approve --run-id orch-<id> --token carol_rm_token
 ```
 
-No schema change → Gate #2 SKIPPED.
+**What it does:**
+- Displays `implementation` and `documentation` artifacts
+- Carol can see the PR URL and verify the branch contains the expected changes
+
+**Expected output:**
+```
+Authenticated as: carol
+Gate       : pr_gate
+
+  ────────────────────────────────────────────────────────
+  IMPLEMENTATION
+  ────────────────────────────────────────────────────────
+
+  PR URL:
+  https://github.com/agentic-dev-projects/url-copilot/pull/<N>
+
+  BRANCH NAME:
+  feature/enterprise-teams-<run-id>
+
+  TEST RESULTS:
+    failed: 0
+    passed: 41
+    success: True
+
+  FILES WRITTEN:
+    • service/models/team.py
+    • service/api/v1/endpoints/teams.py
+    • service/db/migrations/versions/20260804_1200_<rev>_add_teams.py
+
+  ────────────────────────────────────────────────────────
+  DOCUMENTATION
+  ────────────────────────────────────────────────────────
+
+  ROUTES DOCUMENTED:
+    • POST /api/v1/teams
+    • GET  /api/v1/teams/{id}
+    • POST /api/v1/teams/{id}/members
+============================================================
+
+Review comment (optional, press Enter to skip): lgtm
+Approve? [y/n]: y
+
+Approved by carol. Resuming pipeline...
+```
+
+**What runs after approval:**
+- `release_readiness` runs
+- Pipeline pauses at `release_gate`
+
+> **Next approver: RELEASE_MANAGER** — use `carol_rm_token`
 
 ---
 
-## Stages 5a + 5b — UNIT_TESTS + INTEGRATION_TESTS (Parallel)
+### Step 5 — RELEASE_MANAGER approves the release gate
 
+```bash
+python -m orchestrator.run approve --run-id orch-<id> --token carol_rm_token
 ```
-New unit tests:        3/3  PASSED
-New integration tests: 5/5  PASSED
-Existing suite:       45/45 PASSED  ← full regression
-Total:                53/53 PASSED
+
+**Expected output:**
 ```
+Authenticated as: carol
+Gate       : release_gate
+
+  ────────────────────────────────────────────────────────
+  RELEASE READINESS
+  ────────────────────────────────────────────────────────
+
+  BLOCKERS: (none)
+
+  CHECKLIST:
+    tests_pass: True
+    auth_enforced: True
+    no_debug_code: True
+    endpoints_documented: True
+    matches_architecture: True
+    migration_reversible: True
+    no_hardcoded_secrets: True
+    soft_delete_followed: True
+    dependencies_declared: True
+    error_handling_present: True
+
+  READY TO SHIP: Yes
+============================================================
+
+Review comment (optional, press Enter to skip): lgtm
+Approve? [y/n]: y
+
+Approved by carol. Resuming pipeline...
+
+============================================================
+  RUN SUMMARY — orch-<id>
+============================================================
+  Requirement : Make the URL shortener more enterprise-friendly
+  Scenario    : ambiguous
+  Cost (USD)  : ~$0.45
+  Tokens      : ~155,000
+  Stages done : 9
+  Stages fail : 0
+  Retries     : 0
+============================================================
+
+How satisfied are you with this run's output?
+  1 = Unusable   2 = Needs work   3 = Good   4 = Excellent
+Score [1-4] (or press Enter to skip):
+```
+
+> **No further approvals needed** — the run is complete.
 
 ---
 
-## Stage 6 — DOCUMENTATION
+### Step 6 — (Optional) Check status at any point
 
+```bash
+python -m orchestrator.run status --run-id orch-<id> --token <any_token>
 ```
-write_file("docs/design.md")
-  ← Mark NFR-14, NFR-15, NFR-13 as IMPLEMENTED
-  ← Document ALLOWED_ORIGINS config
-write_file("README.md")
-  ← Add curl example for GET /metrics
-  ← Add ALLOWED_ORIGINS to environment variables section
-```
+
+**Who can run it:** Any authenticated token regardless of role.
+
+Shows: current gate, stage completion table, and per-stage token/cost/latency breakdown. The `resolved_requirement` (not the original vague text) is shown as the requirement.
 
 ---
 
-## GitHub PR
+### Step 7 — (Optional) Review without approving
 
-```
-PR #7
-Title: feat: structured logging, metrics endpoint, CORS hardening (SOC2)
-
-Body:
-  ## Summary
-  Production-readiness improvements targeting SOC2 CC7.2, CC7.3, CC6.1.
-
-  ## Changes
-  - NEW service/core/logging.py (JSON formatter + X-Request-ID middleware)
-  - NEW service/api/v1/endpoints/metrics.py (Prometheus /metrics)
-  - MOD service/main.py (RequestIDMiddleware, CORSMiddleware update)
-  - MOD service/config.py (ALLOWED_ORIGINS setting)
-  - MOD requirements.txt (prometheus_fastapi_instrumentator 7.0.0)
-  - MOD docs/design.md (NFR-14, NFR-15, NFR-13 marked implemented)
-  - MOD README.md (curl examples, env var docs)
-
-  ## Scope Decision
-  Original requirement: "Make the service production-ready"
-  Resolved via clarification (SOC2 audit, 2-week window):
-    - Structured logging + request IDs (CC7.2)
-    - Metrics endpoint (CC7.3)
-    - CORS restriction (CC6.1)
-
-  Explicitly deferred:
-    - Redis redirect cache
-    - CI/CD pipeline
-    - Graceful shutdown
-
-  ## Assumptions (confirmed by alice)
-  - A1: Request IDs use UUID4 as X-Request-ID header
-  - A2: Metrics endpoint unauthenticated (Prometheus standard)
-  - A3: CORS origins via ALLOWED_ORIGINS env var
-
-  ## Tests
-  8 new (53 total), all passing
-
-  ## Run
-  Run ID: orch-ambig-003 | Triggered by: alice | Approved: bob
+```bash
+python -m orchestrator.run review --token bob_tl_token
 ```
 
-Bob reviews → Approves → Merges.
+Lists all runs currently awaiting approval visible to this token's role.
 
 ---
 
-## Stage 7 — RELEASE_READINESS
+## Stage Reference
 
-```
-✓ Tests:           53/53 passing
-✓ Linter:          clean
-✓ Docs:            NFRs updated, README updated
-✓ Migration:       none
-✓ PR merged:       by bob (TECH_LEAD)
-✓ Dependency:      prometheus_fastapi_instrumentator 7.0.0 (no CVEs)
-```
+All 9 stages are identical to the greenfield pipeline — see [Greenfield — Stage Reference](greenfield.md#stage-reference) for full descriptions. The only difference in ambiguous runs is:
 
-**Carol's approval view includes the assumption log and scope decision** — she can see exactly what "production-ready" ended up meaning:
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Release Review — orch-ambig-003
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Original: "Make the service production-ready"
-Resolved: SOC2-focused observability and access control
-
-  ✓ Structured JSON logging + X-Request-ID (CC7.2)
-  ✓ GET /metrics endpoint, unauthenticated (CC7.3)
-  ✓ CORS restricted to ALLOWED_ORIGINS env var (CC6.1)
-
-Deferred (documented):
-  - Redis redirect cache, CI/CD, graceful shutdown
-
-Assumptions confirmed by alice:
-  A1. Request IDs: UUID4 as X-Request-ID header
-  A2. Metrics: unauthenticated
-  A3. CORS: ALLOWED_ORIGINS env var
-
-Tests: 53/53 | Lint: clean | Docs: updated
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Approve release? [y/n]: y
-✓ Approved by carol (RELEASE_MANAGER)
-```
+- **Classifier** runs before Stage 1 and returns `ambiguous`
+- **ClarificationLoop** fires before Stage 1: generates up to 4 questions, collects answers via terminal `input()`, synthesises `resolved_requirement` and `assumptions`
+- **requirements_analysis (Stage 1)** reads `resolved_requirement` from state instead of the original `requirement`
+- All subsequent stages behave identically to greenfield or brownfield depending on what the clarification resolved to
 
 ---
 
-## User Feedback
+## What to Verify After the Run
 
-```
-Run orch-ambig-003 completed in 14m 27s
-
-Total cost:  $0.084  (includes clarification loop LLM calls)
-Stages:      9/9 completed, 0 failed, 0 retried
-Clarification rounds: 1 (4 questions, all answered)
-
-Rate this output [1-4]: 4
-Comment: The clarification questions were targeted and smart.
-         The SOC2 mapping was exactly what we needed.
-```
+| Check | Where to look |
+|---|---|
+| Clarification was captured | `requirements_analysis` artifact at architecture_gate — shows resolved_requirement and assumptions |
+| Feature branch created | GitHub → branches list |
+| PR opened | GitHub → Pull Requests |
+| Resolved requirement used | PR body — should reference the scoped requirement, not the vague original |
+| All 9 stages completed | Run summary — `Stages done: 9`, `Stages fail: 0` |
 
 ---
 
-## Memory Written This Run
+## Troubleshooting
 
-| Type | Actor | Content |
-|---|---|---|
-| fact | system | SOC2 audit is the compliance driver for observability work |
-| convention | system | Metrics endpoint must be unauthenticated for Prometheus scraping |
-| convention | system | CORS allowed origins controlled via ALLOWED_ORIGINS env var |
-| decision | system | Request IDs: UUID4 as X-Request-ID response header |
-| preference | bob | request_id must appear in structured log fields, not just response headers |
-| convention | bob | ALLOWED_ORIGINS must have a default for local development |
+**Requirement routed to greenfield or brownfield instead of ambiguous**
+— The classifier did not find the requirement vague enough. Make it more open-ended or use undefined terms. Examples that reliably trigger ambiguous: `"Make the URL shortener more enterprise-friendly"`, `"Improve URL management"`, `"Add team workspace features"`.
 
----
+**Clarification questions don't appear — pipeline starts immediately**
+— The classifier returned greenfield or brownfield with high confidence. Check the `Scenario:` line printed after submission.
 
-## Key Interview Points for This Scenario
+**`ERROR: DATABASE_URL is not set`**
+— PostgreSQL is not running or `.env` is missing. Run `docker-compose up -d db` and check `.env`.
 
-**"How does the agent handle ambiguity?"**
-> "The agent does not ask 'what do you mean?' — it first reads the codebase and maps gaps against the already-documented NFRs in design.md. Then it asks exactly four targeted questions whose answers determine scope. This is codebase reasoning before requirement clarification, not the reverse."
-
-**"What if the user doesn't know the answer?"**
-> "Q2 has an 'I'm not sure' option — the agent picks the highest-value items from its gap analysis. The user retains control but isn't blocked by lack of domain knowledge."
-
-**"Why save deferred items?"**
-> "The deferred list is written to the PR body and to orch_memory. A future run of 'add Redis caching' will find the memory entry noting this was a known gap, understand it's part of a planned sequence, and pick up context from the previous run's decisions."
-
-**"What stops the agent from scoping too broadly?"**
-> "The 2-week deadline + single compliance standard answer collapses the solution space from 7 items to 3. The agent re-plans after every answer — it doesn't just pass the answers to a static template."
+**`Daily token budget exceeded`**
+— The clarification loop uses additional LLM calls before the pipeline starts, increasing total token usage. Raise `DEVELOPER.daily_token_budget` in `orchestrator/config/rbac.yaml` if needed.

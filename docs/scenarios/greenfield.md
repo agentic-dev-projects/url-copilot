@@ -4,72 +4,30 @@ A greenfield run takes a natural-language feature request, plans it, implements 
 feature branch, runs tests, writes documentation, and opens a GitHub PR — with human
 approval gates at four checkpoints.
 
----
-
-## Prerequisites
-
-Before running this scenario make sure the following are running and configured:
-
-| Requirement | Details |
-|---|---|
-| PostgreSQL | `postgresql://postgres:password@localhost:5432/urlcopilot` |
-| Redis | `redis://localhost:6379/0` |
-| `.env` file | `OPENAI_API_KEY`, `GITHUB_TOKEN`, `GITHUB_REPO` set |
-| Python env | `source .venv/bin/activate` |
-| Dependencies | `pip install -r requirements.txt` |
-
-Start backing services with Docker Compose if needed:
-```bash
-docker-compose up -d db cache
-```
-
----
-
-## Roles and Tokens
-
-| Token | Role | What they can do |
-|---|---|---|
-| `alice_dev_token` | DEVELOPER | Submit runs |
-| `bob_tl_token` | TECH_LEAD | Approve architecture gate |
-| `carol_rm_token` | RELEASE_MANAGER | Approve tests, PR, and release gates |
-
-> The four-eyes rule is enforced: the DEVELOPER who submitted the run cannot approve their own gates.
+See **[Quick Start](../QUICK_START.md)** for prerequisites, role tokens, and all CLI commands.
 
 ---
 
 ## Pipeline Overview
 
-```
-DEVELOPER submits requirement
-        │
-        ▼
-requirements_analysis ──► architecture_design
-                                    │
-                          ⏸ GATE 1: architecture_gate  ← TECH_LEAD approves
-                                    │
-               ┌────────────────────┴──────────────────┐
-     implementation_plan                           test_plan
-               └────────────────────┬──────────────────┘
-                                    │
-                             implementation
-                      (creates branch, writes code,
-                       runs tests, commits, opens PR)
-                                    │
-               ┌────────────────────┴──────────────────┐
-            unit_tests                       integration_tests
-               └────────────────────┬──────────────────┘
-                                    │
-                             documentation
-                                    │
-                          ⏸ GATE 2: tests_gate   ← RELEASE_MANAGER approves
-                                    │
-                          ⏸ GATE 3: pr_gate      ← RELEASE_MANAGER approves
-                                    │
-                          release_readiness
-                                    │
-                          ⏸ GATE 4: release_gate ← RELEASE_MANAGER approves
-                                    │
-                               COMPLETED
+```mermaid
+flowchart TD
+    SUBMIT([DEVELOPER submits requirement]) --> RA[requirements_analysis]
+    RA --> AD[architecture_design]
+    AD --> G1{⏸ architecture_gate\nTECH_LEAD}
+    G1 --> IP[implementation_plan]
+    G1 --> TP[test_plan]
+    IP --> IMPL[implementation\nbranch · code · PR]
+    TP --> IMPL
+    IMPL --> UT[unit_tests]
+    IMPL --> IT[integration_tests]
+    UT --> DOC[documentation]
+    IT --> DOC
+    DOC --> G2{⏸ tests_gate\nTECH_LEAD}
+    G2 --> G3{⏸ pr_gate\nRELEASE_MANAGER}
+    G3 --> RR[release_readiness]
+    RR --> G4{⏸ release_gate\nRELEASE_MANAGER}
+    G4 --> DONE([COMPLETED])
 ```
 
 Total: **9 stages**, **4 gates**, run in a single terminal session across multiple `approve` commands.
@@ -78,21 +36,14 @@ Total: **9 stages**, **4 gates**, run in a single terminal session across multip
 
 ## Approval Gates
 
-Gates are human checkpoints that pause the pipeline until an authorised role reviews and approves.
-No code is written before Gate 1. No PR is merged before Gate 4.
+See **[Gates Reference](../GATES.md)** for full details on all four gates, the RBAC permission matrix, and the four-eyes rule.
 
-| Gate | Fires after | Approver role | What the approver reviews | Why it exists |
-|---|---|---|---|---|
-| `architecture_gate` | `architecture_design` | TECH_LEAD | Requirements scope, proposed file changes, new endpoint design, schema change flag | Ensures a senior engineer validates the technical approach **before any code is written** |
-| `tests_gate` | `documentation` | RELEASE_MANAGER | Unit test results, integration test results, test gaps, new test files written | Verifies the feature is adequately tested before it goes to code review |
-| `pr_gate` | `tests_gate` approval | RELEASE_MANAGER | PR URL, branch name, files written, test results from implementation, documentation changes | Code review checkpoint — confirms the PR was created and the implementation matches the approved design |
-| `release_gate` | `release_readiness` | RELEASE_MANAGER | Full release checklist (tests, auth, secrets, docs, error handling, soft-delete, dependencies) | Final sign-off before the run is marked complete — nothing ships without an explicit human approval |
-
-### Four-eyes rule
-
-The user who submits the run (DEVELOPER) cannot approve any gate on their own run.
-Every approval must come from a different user with the required role.
-This is enforced automatically — the `approve` command rejects the submitter's token.
+| Gate | Approver role | What is reviewed |
+|---|---|---|
+| `architecture_gate` | TECH_LEAD | Requirements scope, proposed file changes, new endpoint design, schema change flag |
+| `tests_gate` | TECH_LEAD | Unit/integration test results, test gaps, new test files written |
+| `pr_gate` | RELEASE_MANAGER | PR URL, branch name, files written, test results, documentation changes |
+| `release_gate` | RELEASE_MANAGER | Full release checklist — tests, auth, secrets, docs, error handling |
 
 ---
 
@@ -209,14 +160,14 @@ To see the current status:
 
 ---
 
-### Step 3 — RELEASE_MANAGER approves the tests gate
+### Step 3 — TECH_LEAD approves the tests gate
 
 ```bash
-python -m orchestrator.run approve --run-id orch-<id> --token carol_rm_token
+python -m orchestrator.run approve --run-id orch-<id> --token bob_tl_token
 ```
 
 **What it does:**
-- Authenticates the token and verifies the RELEASE_MANAGER role has `approve_architecture` permission
+- Authenticates the token and verifies the TECH_LEAD role has `approve_architecture` permission
 - Displays the `unit_tests` and `integration_tests` artifacts — test counts, pass/fail results, gaps identified, and any new test files written
 - Prompts for approval
 
@@ -253,7 +204,7 @@ Gate       : tests_gate
 Review comment (optional, press Enter to skip): lgtm
 Approve? [y/n]: y
 
-Approved by carol. Resuming pipeline...
+Approved by bob. Resuming pipeline...
 
 Pipeline paused at next gate: pr_gate
 ```

@@ -1,10 +1,40 @@
 # Orchestrator Architecture — url-copilot
 
-> **Continuity note**: This document is the single source of truth for the orchestration system.
-> The service layer (`service/`) is **fully implemented and tested** (45 tests passing).
-> The orchestrator (`orchestrator/`) is **not yet implemented**.
-> A future session should read this document, read `docs/IMPLEMENTATION_PLAN.md`,
-> and proceed with Phase 1 of the build plan.
+This document is the design reference for the orchestration system. The service layer (`service/`) and orchestrator (`orchestrator/`) are both fully implemented and tested.
+
+---
+
+## System Architecture
+
+```mermaid
+graph TB
+    subgraph CLI["CLI (orchestrator.run)"]
+        RUN[run command] --> PLAN[Planner\nClassifier + Clarification]
+        APR[approve command] --> GW
+    end
+
+    PLAN --> GW[AI Gateway\nAuth · Rate Limit · Cost Tracking]
+    GW --> LG[LangGraph Engine\n9-stage DAG]
+    LG --> AGENTS[Stage Agents\nLLM calls via OpenAI]
+    AGENTS --> TOOLS[Tools\nread_file · write_file\nrun_tests · create_pr]
+    TOOLS --> FS[(Local\nservice/)]
+    TOOLS --> GH[GitHub\nFeature Branch + PR]
+    LG --> GATES[Human Gates\n4 approval checkpoints]
+    GATES --> LG
+
+    subgraph DB["PostgreSQL"]
+        OR[(orch_runs)]
+        OM[(orch_metrics)]
+        OSR[(orch_stage_results)]
+    end
+
+    GW --> DB
+    LG --> DB
+
+    subgraph SVC["URL Shortener Service (FastAPI)"]
+        API[REST API] --> SVC_DB[(PostgreSQL\nurls · users · clicks)]
+    end
+```
 
 ---
 
