@@ -76,6 +76,26 @@ Total: **9 stages**, **4 gates**, run in a single terminal session across multip
 
 ---
 
+## Approval Gates
+
+Gates are human checkpoints that pause the pipeline until an authorised role reviews and approves.
+No code is written before Gate 1. No PR is merged before Gate 4.
+
+| Gate | Fires after | Approver role | What the approver reviews | Why it exists |
+|---|---|---|---|---|
+| `architecture_gate` | `architecture_design` | TECH_LEAD | Requirements scope, proposed file changes, new endpoint design, schema change flag | Ensures a senior engineer validates the technical approach **before any code is written** |
+| `tests_gate` | `documentation` | RELEASE_MANAGER | Unit test results, integration test results, test gaps, new test files written | Verifies the feature is adequately tested before it goes to code review |
+| `pr_gate` | `tests_gate` approval | RELEASE_MANAGER | PR URL, branch name, files written, test results from implementation, documentation changes | Code review checkpoint — confirms the PR was created and the implementation matches the approved design |
+| `release_gate` | `release_readiness` | RELEASE_MANAGER | Full release checklist (tests, auth, secrets, docs, error handling, soft-delete, dependencies) | Final sign-off before the run is marked complete — nothing ships without an explicit human approval |
+
+### Four-eyes rule
+
+The user who submits the run (DEVELOPER) cannot approve any gate on their own run.
+Every approval must come from a different user with the required role.
+This is enforced automatically — the `approve` command rejects the submitter's token.
+
+---
+
 ## Step-by-Step
 
 ### Step 1 — DEVELOPER submits the requirement
