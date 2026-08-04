@@ -1,8 +1,8 @@
 # Implementation Plan — url-copilot Orchestrator
 
-> **Purpose**: This document is the continuation guide for implementing the orchestrator.
-> Read `docs/orchestrator-architecture.md` for the full design.
-> This file tracks what is done, what is next, and the exact build order.
+> **Purpose**: This document is the build log for the orchestrator implementation.
+> Read `docs/orchestrator-architecture.md` for the full design reference.
+> All 17 phases are complete. This file is retained as an implementation reference and decision log.
 
 ---
 
@@ -10,25 +10,29 @@
 
 | Component | Status | Notes |
 |---|---|---|
-| `service/` — URL shortener | ✅ COMPLETE | 45 tests passing, alembic migration ready |
-| `orchestrator/` — AI orchestrator | ❌ NOT STARTED | All phases below pending |
+| `service/` — URL shortener | ✅ COMPLETE | 41 tests passing, alembic migrations applied |
+| `orchestrator/` — AI orchestrator | ✅ COMPLETE | All 17 phases complete, 3 scenarios validated with real LLM runs |
 | `docs/orchestrator-architecture.md` | ✅ COMPLETE | Full design reference |
-| `docs/scenarios/greenfield.md` | ✅ COMPLETE | Full scenario walkthrough |
-| `docs/scenarios/brownfield.md` | ✅ COMPLETE | Full scenario walkthrough |
-| `docs/scenarios/ambiguous.md` | ✅ COMPLETE | Full scenario walkthrough |
-| `docs/IMPLEMENTATION_PLAN.md` | ✅ COMPLETE | This file |
+| `docs/scenarios/greenfield.md` | ✅ COMPLETE | Validated with real run — PR #5 created |
+| `docs/scenarios/brownfield.md` | ✅ COMPLETE | Validated with real run — PR #4 created (orch-a82feb76) |
+| `docs/scenarios/ambiguous.md` | ✅ COMPLETE | Clarification loop working end-to-end |
+| `docs/ENGINEERING_SUMMARY.md` | ✅ COMPLETE | Plan, rationale, risks, assumptions, limitations |
 
 ---
 
-## Dependencies to Add to `requirements.txt`
+## Dependencies Added to `requirements.txt`
 
-Before starting implementation, add these to `requirements.txt`:
+All orchestrator dependencies are included in `requirements.txt`:
 
 ```
 openai>=1.40.0
 PyYAML>=6.0
 PyGithub>=2.3.0
-prometheus_fastapi_instrumentator>=7.0.0
+psycopg[binary]>=3.1.0
+langgraph>=0.2.0
+langgraph-checkpoint-postgres>=1.0.0
+langsmith>=0.1.0
+flake8>=6.0
 pytest-asyncio>=0.23.0
 ```
 
@@ -41,7 +45,7 @@ Phases must be executed in order. Each phase is independently testable.
 ---
 
 ### Phase 1 — Config Files and Directory Skeleton
-**Status**: ❌ TODO
+**Status**: ✅ Done
 **No code logic — just YAML files and `__init__.py` stubs.**
 
 Files to create:
@@ -192,7 +196,7 @@ assert state.get("schema_change_detected") is None  # total=False — key absent
 ---
 
 ### Phase 3.5 — Evaluator Component (Hybrid LLM-as-Judge)
-**Status**: ❌ TODO
+**Status**: ✅ Done
 **Pure Python dataclasses + one LLM call. No DB reads/writes (audit events handled by existing AuditLogger from Phase 5). Build after Phase 3 (data models exist) and before Phase 4 (used by engine in Phase 13).**
 
 This phase implements the three-file hybrid evaluation component described in Section 5.12 of `docs/orchestrator-architecture.md`.
@@ -746,7 +750,7 @@ def requirements_analysis_node(state: OrchestratorState) -> dict:
 ---
 
 ### Phase 14 — Planner
-**Status**: ❌ TODO
+**Status**: ✅ Done
 
 **`orchestrator/planner/classifier.py`** — `RequirementClassifier`:
 ```python
@@ -862,7 +866,7 @@ def build_graph(self, saver: PostgresSaver) -> CompiledGraph:
 ---
 
 ### Phase 16 — Metrics Tracker
-**Status**: ❌ TODO
+**Status**: ✅ Done
 
 > **LangSmith handles all LLM-level tracing automatically** (inputs, outputs, token counts, cost, latency per call). The `MetricsTracker` here only needs to aggregate our `orch_metrics` table — which exists for a different purpose: `TokenBudgetManager` queries it in real time to enforce per-role daily token caps. `MetricsTracker` reads those same rows to produce the end-of-run CLI summary.
 
@@ -887,7 +891,7 @@ def success_rate() -> float:
 ---
 
 ### Phase 17 — CLI Entry Point
-**Status**: ❌ TODO
+**Status**: ✅ Done
 
 File: **`orchestrator/run.py`**
 
@@ -1008,7 +1012,7 @@ LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 | 11 | Prompt builder (7-layer assembly, PromptLoader latest-version resolution) | ✅ |
 | 12 | Stage agent (@traceable, multi-turn tool-call loop, cache + StageResult) | ✅ |
 | 13 | Orchestration engine (LangGraph StateGraph, MemorySaver/PostgresSaver) | ✅ |
-| 14 | Planner + clarification loop | ❌ |
+| 14 | Planner + clarification loop | ✅ |
 | 15 | Scenarios (GreenField 14-node graph, Brownfield, Ambiguous + node factories) | ✅ |
-| 16 | Metrics tracker | ❌ |
-| 17 | CLI entry point | ❌ |
+| 16 | Metrics tracker | ✅ |
+| 17 | CLI entry point | ✅ |

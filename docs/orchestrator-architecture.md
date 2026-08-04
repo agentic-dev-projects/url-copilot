@@ -41,8 +41,8 @@ graph TB
 ## Table of Contents
 
 1. [System Overview](#1-system-overview)
-2. [What Is Already Built](#2-what-is-already-built)
-3. [What Needs To Be Built](#3-what-needs-to-be-built)
+2. [Service Layer — Complete](#2-service-layer--complete)
+3. [Orchestrator Layer — Complete](#3-orchestrator-layer--complete)
 4. [Complete Data Flow](#4-complete-data-flow)
 5. [Component Reference](#5-component-reference)
    - 5.1–5.11 (existing components)
@@ -72,7 +72,7 @@ graph TB
 | System | Status | Location |
 |---|---|---|
 | URL Shortener Service | **Fully implemented** | `service/` |
-| AI SDLC Orchestrator | **Not yet implemented** | `orchestrator/` |
+| AI SDLC Orchestrator | **Fully implemented** | `orchestrator/` |
 
 The **AI SDLC Orchestrator** accepts a natural-language engineering requirement, classifies it, decomposes it into a LangGraph pipeline, executes each stage using OpenAI `gpt-4o` as the doer agent, enforces human approval gates with RBAC, writes actual code changes to `service/`, creates a GitHub PR, and produces a full audit trail.
 
@@ -88,7 +88,7 @@ The **AI SDLC Orchestrator** accepts a natural-language engineering requirement,
 
 ---
 
-## 2. What Is Already Built
+## 2. Service Layer — Complete
 
 ### Service Layer (`service/`) — 100% Complete
 
@@ -109,7 +109,7 @@ service/
 └── main.py              FastAPI app, CORS, routers, health check
 ```
 
-**Tests**: 45 passing (14 unit security, 16 unit url_generator, 8 unit url_service, 6 integration auth, 13 integration urls).
+**Tests**: 41 passing (unit: security, url_generator, url_service; integration: auth, urls).
 
 **Alembic**: Migration `0f952025db76` covers all 4 tables (users, api_keys, short_urls, click_events). Run `alembic upgrade head` to apply.
 
@@ -127,16 +127,14 @@ uvicorn service.main:app --reload
 
 ---
 
-## 3. What Needs To Be Built
+## 3. Orchestrator Layer — Complete
 
-Everything under `orchestrator/` — see `docs/IMPLEMENTATION_PLAN.md` for the ordered build sequence.
-
-High-level summary of what to build:
+Everything under `orchestrator/` is implemented. See `docs/IMPLEMENTATION_PLAN.md` for the build log and phase-by-phase notes.
 
 ```
 orchestrator/
 ├── gateway/          AI Gateway (auth, validation, guardrails, LangSmith-traced LLM calls)
-├── planner/          Requirement classifier + scenario selector
+├── planner/          Requirement classifier + scenario selector + clarification loop
 ├── memory/           Cross-run memory (facts, preferences, decisions)
 ├── cache/            Response cache + tool result cache
 ├── tools/            Tool registry (read_file, write_file, run_tests, github)
@@ -146,14 +144,12 @@ orchestrator/
 ├── evaluator/        Hybrid LLM-as-Judge (ValidatorAgent, HybridGate, EvaluationReport)
 ├── governance/       RBAC checkpoints + SDLC audit log
 ├── state/            PostgreSQL persistence for all orch_ tables
-├── metrics/          Cost budgeting aggregation (LLM tracing handled by LangSmith)
-├── scenarios/        3 scenario DAG definitions
-├── config/           users.yaml, rbac.yaml, models.yaml
-├── prompts/          Versioned system prompts per stage
-└── run.py            CLI entry point
+├── metrics/          Cost budgeting aggregation, MTTR, per-stage summary
+├── scenarios/        3 scenario DAG definitions (greenfield, brownfield, ambiguous)
+├── config/           users.yaml, rbac.yaml, models.yaml, evaluator.yaml
+├── prompts/          Versioned system prompts per stage (stages/ + evaluator/)
+└── run.py            CLI entry point (run, approve, status, review commands)
 ```
-
-A new Alembic migration (`orch_tables`) must be created for the orchestrator's PostgreSQL tables (see Section 6).
 
 ---
 
@@ -1334,7 +1330,7 @@ prompts:
 ```
 url-copilot/
 │
-├── service/                          ← FULLY IMPLEMENTED (do not modify for orchestrator)
+├── service/                          ← URL shortener service (fully implemented)
 │   ├── api/v1/endpoints/
 │   ├── models/
 │   ├── schemas/
@@ -1347,7 +1343,7 @@ url-copilot/
 │   ├── config.py
 │   └── main.py
 │
-├── orchestrator/                     ← TO BE BUILT (see IMPLEMENTATION_PLAN.md)
+├── orchestrator/                     ← AI SDLC orchestrator (fully implemented)
 │   ├── __init__.py
 │   ├── run.py                        ← CLI entry point
 │   │
