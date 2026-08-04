@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+from fastapi.responses import JSONResponse
+from base64 import b64encode
 
 from service.api.deps import check_rate_limit, get_current_user
 from service.config import settings
@@ -12,6 +14,7 @@ from service.schemas.url import (
     URLListResponse,
     URLResponse,
     UpdateURLRequest,
+    QRResponseSchema,
 )
 from service.services import url_service
 
@@ -93,6 +96,27 @@ def get_url(
     if not short_url:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found")
     return _to_response(short_url, settings.base_url)
+
+
+@router.get(
+    "/{url_id}/qr",
+    response_model=QRResponseSchema,
+    summary="Generate and return a QR code for the original URL",
+)
+def get_qr_code(
+    url_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> QRResponseSchema:
+    short_url = url_service.get_short_url_by_id(db, url_id=url_id, owner=current_user)
+    if not short_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found")
+
+    image_stream = url_service.generate_qr_code(short_url.original_url)
+    image_base64 = b64encode(image_stream.getvalue()).decode('utf-8')
+    data_uri = f"data:image/png;base64,{image_base64}"
+
+    return QRResponseSchema(qr_code_url=data_uri)
 
 
 @router.put(
