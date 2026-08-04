@@ -107,6 +107,32 @@ def make_stage_node(
                 }}
 
             _audit(audit, run_id, EventType.STAGE_COMPLETED, stage_name=stage_name)
+
+            # For implementation: if the LLM did not call commit_and_push / create_pr,
+            # do it here as a fallback so a PR is always created.
+            if stage_name == "implementation" and result.output_artifact:
+                artifact = result.output_artifact
+                branch = artifact.get("branch_name")
+                if branch and not artifact.get("pr_url"):
+                    from orchestrator.tools import github_client
+                    req = state.get("requirement", "")
+                    try:
+                        github_client.commit_and_push(
+                            branch,
+                            f"feat: {req[:60]}" if req else "feat: orchestrator implementation",
+                        )
+                        pr_url = github_client.create_pr(
+                            title=f"feat: {req[:70]}" if req else "feat: orchestrator implementation",
+                            body=f"Automated PR from orchestrator run `{run_id}`.\n\n**Requirement**: {req}",
+                            branch=branch,
+                            base="main",
+                        )
+                        artifact["pr_url"] = pr_url
+                        artifact["pr_number"] = int(pr_url.rstrip("/").split("/")[-1]) if pr_url else None
+                    except Exception as exc:
+                        artifact["pr_url"] = None
+                        artifact["pr_creation_error"] = str(exc)
+
             return {"stage_artifacts": {
                 **state.get("stage_artifacts", {}),
                 stage_name: result.output_artifact,
