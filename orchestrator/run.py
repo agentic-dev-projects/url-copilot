@@ -522,6 +522,8 @@ def handle_approve(run_id: str, token: str) -> None:
         print(f"\nTo continue:")
         print(f"  python -m orchestrator.run review --token <approver_token>")
         print(f"  python -m orchestrator.run approve --run-id {run_id} --token <approver_token>")
+        print(f"\nTo see the current status:")
+        print(f"  python -m orchestrator.run status --run-id {run_id} --token <your_token>")
 
     except KeyboardInterrupt:
         print("\nAborted by user.")

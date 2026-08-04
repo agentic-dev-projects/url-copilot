@@ -124,7 +124,11 @@ Pipeline paused at next gate: architecture_gate
   Required permission: approve_architecture
 
 To continue:
+  python -m orchestrator.run review --token <approver_token>
   python -m orchestrator.run approve --run-id orch-<id> --token <approver_token>
+
+To see the current status:
+  python -m orchestrator.run status --run-id orch-<id> --token <your_token>
 ```
 
 > **Save the Run ID** — you will pass it to every subsequent `approve` command.
@@ -194,7 +198,11 @@ Pipeline paused at next gate: tests_gate
   Required permission: approve_architecture
 
 To continue:
+  python -m orchestrator.run review --token <approver_token>
   python -m orchestrator.run approve --run-id orch-<id> --token <approver_token>
+
+To see the current status:
+  python -m orchestrator.run status --run-id orch-<id> --token <your_token>
 ```
 
 > **Next approver: RELEASE_MANAGER** — use `carol_rm_token`
