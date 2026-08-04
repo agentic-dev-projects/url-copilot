@@ -175,11 +175,28 @@ Open `http://localhost:8000/docs` in your browser for the full Swagger UI.
 
 ## Running Tests
 
-Tests use SQLite and stub out Redis — no external services needed.
+The project has two test tiers:
+
+| Tier | What runs | Infrastructure | Time |
+|---|---|---|---|
+| Unit / integration | 321 tests across service + orchestrator | Python only (SQLite) | < 30s |
+| Live E2E | 7 tests — real OpenAI calls + PostgreSQL | PostgreSQL + API key | 3–8 min |
+
+**Quick start — run all unit tests (no external services needed):**
 
 ```bash
-pytest service/tests/ -v
+.venv/bin/python -m pytest service/tests/ orchestrator/tests/ \
+  --ignore=orchestrator/tests/test_e2e_live.py -v
 ```
+
+**Live E2E tests (explicit opt-in, costs ~$0.01–$0.40):**
+
+```bash
+RUN_E2E=1 .venv/bin/python -m pytest orchestrator/tests/test_e2e_live.py -v -s
+```
+
+See [docs/TESTING.md](docs/TESTING.md) for the full guide — individual module commands,
+prerequisites for E2E, what is mocked vs real, and the rationale behind the two-tier design.
 
 ---
 
