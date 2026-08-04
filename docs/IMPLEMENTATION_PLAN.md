@@ -686,7 +686,7 @@ while response has tool_calls:
 ---
 
 ### Phase 13 — Orchestration Engine
-**Status**: ❌ TODO
+**Status**: ✅ COMPLETE
 
 > **LangGraph replaces the custom DAG loop.** The ~400-line execute() loop with manual threading, retry logic, and gate polling is replaced by a declarative ~80-line LangGraph StateGraph that provides all of these natively: parallel fan-out, `interrupt()` for human gates, `RetryPolicy` for retries, and `PostgresSaver` for state checkpointing.
 
@@ -784,7 +784,7 @@ def run_clarification_loop(requirement: str, gateway: AIGateway, ...) -> dict:
 ---
 
 ### Phase 15 — Scenarios
-**Status**: ❌ TODO
+**Status**: ✅ COMPLETE
 
 > **LangGraph replaces build_dag().** Each scenario now returns a compiled LangGraph `StateGraph` instead of a `DAGGraph`. The graph topology — fan-out, fan-in, conditional edges, interrupt() gates — is declared once per scenario using LangGraph's API.
 
@@ -1007,8 +1007,8 @@ LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 | 10 | Tool registry (filesystem, test_runner, github_client + OpenAI schemas) | ✅ |
 | 11 | Prompt builder (7-layer assembly, PromptLoader latest-version resolution) | ✅ |
 | 12 | Stage agent (@traceable, multi-turn tool-call loop, cache + StageResult) | ✅ |
-| 13 | Orchestration engine | ❌ |
+| 13 | Orchestration engine (LangGraph StateGraph, MemorySaver/PostgresSaver) | ✅ |
 | 14 | Planner + clarification loop | ❌ |
-| 15 | Scenarios (greenfield, brownfield, ambiguous) | ❌ |
+| 15 | Scenarios (GreenField 14-node graph, Brownfield, Ambiguous + node factories) | ✅ |
 | 16 | Metrics tracker | ❌ |
 | 17 | CLI entry point | ❌ |
