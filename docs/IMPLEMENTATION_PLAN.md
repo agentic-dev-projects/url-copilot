@@ -590,7 +590,7 @@ def call(tool_name: str, args: dict, context: RunContext, metrics_writer) -> Any
 ---
 
 ### Phase 11 — Prompt Builder
-**Status**: ❌ TODO
+**Status**: ✅ COMPLETE
 
 Create versioned prompt files in `orchestrator/prompts/`:
 - One `.txt` file per stage (9 stages + classifier)
@@ -1005,7 +1005,7 @@ LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 | 8 | Memory system (MemoryStore — seed/save/invalidate/format_for_prompt) | ✅ |
 | 9 | Cache (ResponseCache 24h TTL + ToolCache in-memory per-run) | ✅ |
 | 10 | Tool registry (filesystem, test_runner, github_client + OpenAI schemas) | ✅ |
-| 11 | Prompt builder | ❌ |
+| 11 | Prompt builder (7-layer assembly, PromptLoader latest-version resolution) | ✅ |
 | 12 | Stage agent | ❌ |
 | 13 | Orchestration engine | ❌ |
 | 14 | Planner + clarification loop | ❌ |
