@@ -140,6 +140,52 @@ class MetricsTracker:
 
     # ── private helpers ───────────────────────────────────────────────────────
 
+    def per_stage_summary(self, run_id: str) -> list[dict]:
+        """Return per-stage aggregated metrics for a run, ordered by first call time.
+
+        Each dict contains:
+            stage_name        str
+            tokens_in         int
+            tokens_out        int
+            total_tokens      int
+            cost_usd          float
+            avg_latency_ms    float
+            llm_calls         int
+            cache_hits        int
+        """
+        rows = self.session.execute(
+            text(
+                "SELECT "
+                "  stage_name, "
+                "  COALESCE(SUM(tokens_in), 0)                               AS tokens_in, "
+                "  COALESCE(SUM(tokens_out), 0)                              AS tokens_out, "
+                "  COALESCE(SUM(tokens_in + tokens_out), 0)                  AS total_tokens, "
+                "  COALESCE(SUM(cost_usd), 0)                                AS cost_usd, "
+                "  COALESCE(AVG(llm_latency_ms), 0)                          AS avg_latency_ms, "
+                "  COUNT(*)                                                   AS llm_calls, "
+                "  COALESCE(SUM(CASE WHEN cache_hit THEN 1 ELSE 0 END), 0)   AS cache_hits "
+                "FROM orch_metrics "
+                "WHERE run_id = :run_id "
+                "GROUP BY stage_name "
+                "ORDER BY MIN(created_at)"
+            ),
+            {"run_id": run_id},
+        ).mappings().all()
+
+        return [
+            {
+                "stage_name":     row["stage_name"],
+                "tokens_in":      int(row["tokens_in"]),
+                "tokens_out":     int(row["tokens_out"]),
+                "total_tokens":   int(row["total_tokens"]),
+                "cost_usd":       round(float(row["cost_usd"]), 6),
+                "avg_latency_ms": round(float(row["avg_latency_ms"]), 0),
+                "llm_calls":      int(row["llm_calls"]),
+                "cache_hits":     int(row["cache_hits"]),
+            }
+            for row in rows
+        ]
+
     def _aggregate_metrics(self, run_id: str) -> dict:
         row = self.session.execute(
             text(

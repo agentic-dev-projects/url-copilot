@@ -606,6 +606,24 @@ def handle_status(run_id: str, token: str) -> None:
             for r in stage_rows:
                 print(f"  {r['stage_name']:<30} {r['status']:<12} {r['attempt_number']}")
 
+        # Per-stage metrics (tokens, cost, latency)
+        from orchestrator.metrics.tracker import MetricsTracker
+        tracker = MetricsTracker(session)
+        stage_metrics = tracker.per_stage_summary(run_id)
+        if stage_metrics:
+            print(f"\n  PER-STAGE METRICS")
+            print(f"  {'STAGE':<30} {'TOKENS':>8} {'COST $':>8} {'AVG LAT':>9} {'CALLS':>6} {'HITS':>5}")
+            print(f"  {'-'*30} {'-'*8} {'-'*8} {'-'*9} {'-'*6} {'-'*5}")
+            for m in stage_metrics:
+                print(
+                    f"  {m['stage_name']:<30}"
+                    f" {m['total_tokens']:>8,}"
+                    f" {m['cost_usd']:>8.4f}"
+                    f" {m['avg_latency_ms']:>8.0f}ms"
+                    f" {m['llm_calls']:>6}"
+                    f" {m['cache_hits']:>5}"
+                )
+
         print(f"{'='*60}")
 
     finally:

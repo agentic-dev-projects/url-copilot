@@ -382,10 +382,52 @@ Score [1-4] (or press Enter to skip):
 ### Step 6 — (Optional) Check status at any point
 
 ```bash
-python -m orchestrator.run status --run-id orch-<id> --token alice_dev_token
+python -m orchestrator.run status --run-id orch-<id> --token <any_token>
 ```
 
-**What it does:** Shows the current state of a run — which gate it is waiting at, or that it has completed.
+**Who can run it:** Any authenticated token regardless of role — DEVELOPER, TECH_LEAD, RELEASE_MANAGER, and ADMIN all have access.
+
+**What it does:**
+- Shows the current state of the run — which gate it is waiting at, that it is running, or that it has completed
+- Lists every stage with its status and attempt number
+- Shows a per-stage metrics table: total tokens consumed, cost in USD, average LLM call latency, number of LLM calls, and cache hits
+
+**Expected output (mid-run, waiting at a gate):**
+```
+============================================================
+  RUN STATUS — orch-<id>
+============================================================
+  Requirement  : Add QR code endpoint GET /api/v1/urls/{id}/qr
+  Scenario     : greenfield
+  Submitted by : alice
+  Created at   : 2025-08-03 14:22:01
+
+  Status       : AWAITING APPROVAL
+  Pending gate : tests_gate  (requires: approve_architecture)
+
+  An approver can action this with:
+    python -m orchestrator.run approve --run-id orch-<id> --token <approver_token>
+
+  STAGE                          STATUS       ATTEMPT
+  ------------------------------ ------------ -------
+  requirements_analysis          completed    1
+  architecture_design            completed    1
+  implementation_plan            completed    1
+  test_plan                      completed    1
+  implementation                 completed    1
+  unit_tests                     completed    1
+  integration_tests              completed    1
+  documentation                  completed    1
+
+  PER-STAGE METRICS
+  STAGE                          TOKENS   COST $   AVG LAT  CALLS  HITS
+  ------------------------------ -------- -------- --------- ------ -----
+  requirements_analysis           12,450   0.0187    2340ms      2      0
+  architecture_design             18,730   0.0281    3120ms      3      1
+  implementation                  45,200   0.0678    4890ms      6      2
+  ...
+============================================================
+```
 
 ---
 
