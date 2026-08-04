@@ -484,7 +484,7 @@ Call `seed_if_empty()` once at orchestrator startup (in `run.py`).
 ---
 
 ### Phase 9 — Cache
-**Status**: ❌ TODO
+**Status**: ✅ COMPLETE
 
 **`orchestrator/cache/response_cache.py`** — `ResponseCache`:
 ```python
@@ -1003,7 +1003,7 @@ LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 | 6 | Gateway: auth + RBAC checkpoint (TokenAuthenticator, RBACCheckpoint, four-eyes) | ✅ |
 | 7 | Gateway: full pipeline (11-step pipeline, wrap_openai LangSmith tracing) | ✅ |
 | 8 | Memory system (MemoryStore — seed/save/invalidate/format_for_prompt) | ✅ |
-| 9 | Cache (response + tool) | ❌ |
+| 9 | Cache (ResponseCache 24h TTL + ToolCache in-memory per-run) | ✅ |
 | 10 | Tool registry | ❌ |
 | 11 | Prompt builder | ❌ |
 | 12 | Stage agent | ❌ |
