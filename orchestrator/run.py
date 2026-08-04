@@ -48,6 +48,9 @@ import os
 import sys
 from typing import Any
 
+from dotenv import load_dotenv
+load_dotenv()  # load .env before AIGateway constructs openai.OpenAI()
+
 # ── Optional langgraph check (fast, done at module load for --help) ───────────
 try:
     from langgraph.checkpoint.memory import MemorySaver as _MemorySaver
@@ -91,15 +94,17 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--token", required=True,
                        help="Auth token (see orchestrator/config/users.yaml)")
 
+    # ── review ────────────────────────────────────────────────────────────────
+    review_p = sub.add_parser("review", help="List pending gate approvals you can action")
+    review_p.add_argument("--token", required=True,
+                          help="Approver auth token (see orchestrator/config/users.yaml)")
+
     # ── approve ───────────────────────────────────────────────────────────────
-    approve_p = sub.add_parser("approve", help="Approve a paused human gate")
+    approve_p = sub.add_parser("approve", help="Review artifacts and approve a paused gate")
     approve_p.add_argument("--run-id", required=True,
-                           help="Run ID from a previous 'run' command")
-    approve_p.add_argument("--gate", required=True,
-                           choices=list(_GATE_CHOICES.keys()),
-                           help="Which gate to approve")
+                           help="Run ID shown by 'run' or 'review' command")
     approve_p.add_argument("--token", required=True,
-                           help="Approver auth token (must differ from run requester)")
+                           help="Approver auth token (must differ from run submitter)")
 
     return parser
 
@@ -118,22 +123,34 @@ def main() -> None:
 
     if args.command == "run":
         handle_run(args.requirement, args.token)
+    elif args.command == "review":
+        handle_review(args.token)
     elif args.command == "approve":
-        handle_approve(args.run_id, args.gate, args.token)
+        handle_approve(args.run_id, args.token)
 
 
 # ── handle_run ────────────────────────────────────────────────────────────────
 
 
 def handle_run(requirement: str, token: str) -> None:
-    """Classify, plan, execute the full pipeline, and print a metrics summary."""
+    """Classify, plan, start the pipeline, and exit once the first gate is reached."""
     if not _LANGGRAPH_AVAILABLE:
         print("ERROR: langgraph not installed.")
         print("  Run: pip install langgraph")
         sys.exit(1)
 
-    # ── Lazy imports (keep top-level clean; avoid openai import at --help time) ─
-    from langgraph.checkpoint.memory import MemorySaver
+    database_url = os.environ.get("DATABASE_URL", "")
+    if not database_url:
+        print("ERROR: DATABASE_URL is not set.")
+        sys.exit(1)
+
+    try:
+        from langgraph.checkpoint.postgres import PostgresSaver
+        import psycopg
+    except ImportError:
+        print("ERROR: PostgresSaver requires psycopg and langgraph[postgres].")
+        print("  Run: pip install 'psycopg[binary]' 'langgraph[postgres]'")
+        sys.exit(1)
 
     from orchestrator.agents.stage_agent import StageAgent
     from orchestrator.cache.response_cache import ResponseCache
@@ -141,9 +158,7 @@ def handle_run(requirement: str, token: str) -> None:
     from orchestrator.gateway.auth import TokenAuthenticator
     from orchestrator.gateway.gateway import AIGateway
     from orchestrator.governance.audit import AuditLogger
-    from orchestrator.governance.checkpoint import RBACCheckpoint
     from orchestrator.memory.store import MemoryStore
-    from orchestrator.metrics.tracker import MetricsTracker
     from orchestrator.planner.clarification import ClarificationLoop
     from orchestrator.planner.classifier import RequirementClassifier
     from orchestrator.planner.planner import Planner
@@ -157,7 +172,6 @@ def handle_run(requirement: str, token: str) -> None:
 
     session = SessionLocal()
     try:
-        # ── Shared infrastructure ─────────────────────────────────────────────
         run_store    = RunStateStore(session)
         audit        = AuditLogger(session)
         memory_store = MemoryStore(session)
@@ -165,19 +179,15 @@ def handle_run(requirement: str, token: str) -> None:
         registry     = ToolRegistry()
         gateway      = AIGateway()
         auth         = TokenAuthenticator()
-        rbac         = RBACCheckpoint(auth)
 
-        # Seed persistent memory with URL-shortener conventions (no-op if already seeded)
         memory_store.seed_if_empty()
 
-        # ── Authenticate caller ───────────────────────────────────────────────
         user = auth.resolve(token)
         print(f"\nAuthenticated as: {user.github_login} ({user.role})")
 
-        # ── Plan ──────────────────────────────────────────────────────────────
-        classifier   = RequirementClassifier(gateway)
+        classifier    = RequirementClassifier(gateway)
         clarification = ClarificationLoop(gateway)
-        planner      = Planner(classifier, clarification, run_store)
+        planner       = Planner(classifier, clarification, run_store)
 
         print("Classifying requirement...")
         state = planner.plan(
@@ -193,53 +203,47 @@ def handle_run(requirement: str, token: str) -> None:
             for a in state["assumptions"]:
                 print(f"  • {a}")
 
-        # ── Build nodes ───────────────────────────────────────────────────────
         agent = StageAgent(gateway, registry, cache)
+        nodes = _build_nodes(agent, memory_store, run_store, audit)
 
-        all_node_names = GreenFieldScenario.node_names()
-        gate_names  = {n for n in all_node_names if n.endswith("_gate")}
-        stage_names = [n for n in all_node_names if n not in gate_names]
-
-        nodes: dict[str, Any] = {}
-        for name in stage_names:
-            nodes[name] = make_stage_node(name, agent, memory_store, run_store, audit)
-        for name in gate_names:
-            nodes[name] = make_gate_node(
-                gate_name=name,
-                required_permission=_GATE_PERMISSIONS[name],
-                audit=audit,
-                hybrid_gate=None,   # interactive approval handled below in gate loop
-            )
-
-        # ── Select scenario ───────────────────────────────────────────────────
         scenario_cls = {
             "greenfield": GreenFieldScenario,
             "brownfield": BrownfieldScenario,
             "ambiguous":  AmbiguousScenario,
         }.get(state["scenario_type"], GreenFieldScenario)
 
-        engine = OrchestrationEngine(
-            scenario=scenario_cls(nodes),
-            checkpointer=MemorySaver(),
-        )
-
-        # ── Execute with interactive gate loop ────────────────────────────────
         print(f"\nStarting pipeline for run {run_id}...")
         print("-" * 60)
 
-        _run_gate_loop(engine, state, user.github_login, rbac, run_store)
+        with psycopg.connect(database_url, autocommit=True) as conn:
+            checkpointer = PostgresSaver(conn)
+            checkpointer.setup()
+            engine = OrchestrationEngine(
+                scenario=scenario_cls(nodes),
+                checkpointer=checkpointer,
+            )
+            engine.run(state)
 
-        # ── End-of-run summary ────────────────────────────────────────────────
-        tracker = MetricsTracker(session)
-        summary = tracker.summarize(run_id)
-        mttr    = tracker.compute_mttr(run_id)
-        _print_summary(summary, state, mttr)
+            snapshot = engine.get_state(run_id)
 
-        # ── User feedback ─────────────────────────────────────────────────────
-        score, comment = _collect_feedback()
-        run_store.update_run_completed(run_id, feedback_score=score, feedback_comment=comment)
+        if not snapshot.next:
+            # Pipeline completed without hitting any gate (unusual)
+            run_store.update_run_status(run_id, "completed")
+            print(f"\nPipeline completed for run {run_id}.")
+            return
 
-        print(f"\nRun {run_id} completed. Thank you for your feedback.")
+        gate_info = _extract_interrupt(snapshot)
+        gate_name = gate_info.get("gate_name", "unknown_gate") if gate_info else "unknown_gate"
+        run_store.update_run_status(run_id, f"awaiting:{gate_name}")
+
+        print(f"\nPipeline paused — waiting for gate approval.")
+        print(f"\n  Run ID : {run_id}")
+        print(f"  Gate   : {gate_name}  (requires: {_GATE_PERMISSIONS.get(gate_name, '?')})")
+        print(f"\nNext steps:")
+        print(f"  # Approver — see all pending reviews:")
+        print(f"  python -m orchestrator.run review --token <approver_token>")
+        print(f"\n  # Approver — approve this specific run:")
+        print(f"  python -m orchestrator.run approve --run-id {run_id} --token <approver_token>")
 
     except KeyboardInterrupt:
         print("\nAborted by user.")
@@ -251,11 +255,75 @@ def handle_run(requirement: str, token: str) -> None:
         session.close()
 
 
+# ── handle_review ─────────────────────────────────────────────────────────────
+
+
+def handle_review(token: str) -> None:
+    """List all pending gate approvals the caller has permission to action."""
+    from orchestrator.gateway.auth import TokenAuthenticator
+    from orchestrator.governance.checkpoint import RBACCheckpoint
+    from orchestrator.state.store import RunStateStore
+    from service.db.session import SessionLocal
+
+    session = SessionLocal()
+    try:
+        run_store = RunStateStore(session)
+        auth      = TokenAuthenticator()
+        rbac      = RBACCheckpoint(auth)
+
+        user = auth.resolve(token)
+        print(f"\nPending gate approvals  —  logged in as: {user.github_login} ({user.role})")
+
+        pending = run_store.get_pending_runs()
+        if not pending:
+            print("\n  No runs are currently awaiting approval.")
+            return
+
+        approvable = []
+        for run in pending:
+            raw_status = run.get("status", "")
+            if not raw_status.startswith("awaiting:"):
+                continue
+            gate_name = raw_status.split(":", 1)[1]
+            required_permission = _GATE_PERMISSIONS.get(gate_name)
+            if not required_permission:
+                continue
+            # Check four-eyes and permission without raising
+            try:
+                rbac.request_approval(
+                    run_id=run["id"],
+                    gate_name=gate_name,
+                    required_permission=required_permission,
+                    trigger_user=run["triggered_by"],
+                    approver_token=token,
+                )
+                approvable.append((run, gate_name))
+            except Exception:
+                pass  # Not permitted or four-eyes violation — skip silently
+
+        if not approvable:
+            print(f"\n  No pending approvals for your role ({user.role}).")
+            print("  Either no runs are waiting, or you submitted all of them (four-eyes).")
+            return
+
+        print(f"\n  {'RUN ID':<18} {'GATE':<25} {'SUBMITTED BY':<14} REQUIREMENT")
+        print(f"  {'-'*18} {'-'*25} {'-'*14} {'-'*40}")
+        for run, gate_name in approvable:
+            req_short = (run["requirement"] or "")[:40]
+            print(f"  {run['id']:<18} {gate_name:<25} {run['triggered_by']:<14} {req_short}")
+
+        print(f"\nTo review and approve:")
+        print(f"  python -m orchestrator.run approve --run-id <RUN_ID> --token {token}")
+
+    finally:
+        session.close()
+
+
 # ── handle_approve ────────────────────────────────────────────────────────────
 
 
-def handle_approve(run_id: str, gate: str, token: str) -> None:
-    """Resume a paused run after human gate approval (cross-process, requires PostgreSQL)."""
+def handle_approve(run_id: str, token: str) -> None:
+    """Review artifacts for a pending gate and approve or reject it."""
     if not _LANGGRAPH_AVAILABLE:
         print("ERROR: langgraph not installed.")
         print("  Run: pip install langgraph")
@@ -264,8 +332,6 @@ def handle_approve(run_id: str, gate: str, token: str) -> None:
     database_url = os.environ.get("DATABASE_URL", "")
     if not database_url:
         print("ERROR: DATABASE_URL is not set.")
-        print("  Cross-process approval requires PostgreSQL and DATABASE_URL.")
-        print("  For same-process interactive approval, use: python -m orchestrator.run run ...")
         sys.exit(1)
 
     try:
@@ -273,7 +339,7 @@ def handle_approve(run_id: str, gate: str, token: str) -> None:
         import psycopg
     except ImportError:
         print("ERROR: PostgresSaver requires psycopg and langgraph[postgres].")
-        print("  Run: pip install langgraph[postgres] psycopg[binary]")
+        print("  Run: pip install 'psycopg[binary]' 'langgraph[postgres]'")
         sys.exit(1)
 
     from orchestrator.agents.stage_agent import StageAgent
@@ -284,6 +350,9 @@ def handle_approve(run_id: str, gate: str, token: str) -> None:
     from orchestrator.governance.audit import AuditLogger
     from orchestrator.governance.checkpoint import RBACCheckpoint
     from orchestrator.memory.store import MemoryStore
+    from orchestrator.metrics.tracker import MetricsTracker
+    from orchestrator.scenarios.ambiguous import AmbiguousScenario
+    from orchestrator.scenarios.brownfield import BrownfieldScenario
     from orchestrator.scenarios.greenfield import GreenFieldScenario
     from orchestrator.scenarios.nodes import make_gate_node, make_stage_node
     from orchestrator.state.store import RunStateStore
@@ -297,61 +366,122 @@ def handle_approve(run_id: str, gate: str, token: str) -> None:
         auth      = TokenAuthenticator()
         rbac      = RBACCheckpoint(auth)
 
-        # Load run to get triggered_by for four-eyes check
+        # ── Discover pending gate from DB ─────────────────────────────────────
         run_row = run_store.get_run(run_id)
-        triggered_by = run_row["triggered_by"]
+        raw_status = run_row.get("status", "")
+        if not raw_status.startswith("awaiting:"):
+            print(f"Run {run_id} is not awaiting approval (status: {raw_status}).")
+            sys.exit(1)
 
-        # Verify approver identity + permission + four-eyes
-        gate_node_name = _GATE_CHOICES[gate]
-        required_permission = _GATE_PERMISSIONS[gate_node_name]
+        gate_name = raw_status.split(":", 1)[1]
+        required_permission = _GATE_PERMISSIONS.get(gate_name)
+        if not required_permission:
+            print(f"Unknown gate '{gate_name}' — no permission mapping found.")
+            sys.exit(1)
+
+        # ── Authenticate + RBAC ───────────────────────────────────────────────
         try:
             approver_login = rbac.request_approval(
                 run_id=run_id,
-                gate_name=gate_node_name,
+                gate_name=gate_name,
                 required_permission=required_permission,
-                trigger_user=triggered_by,
+                trigger_user=run_row["triggered_by"],
                 approver_token=token,
             )
         except Exception as exc:
             print(f"Approval denied: {exc}")
             sys.exit(1)
 
-        comment = input(f"Comment for gate '{gate}' (optional): ").strip()
+        print(f"\nAuthenticated as: {approver_login}")
+        print(f"Run ID     : {run_id}")
+        print(f"Gate       : {gate_name}")
+        print(f"Submitted by: {run_row['triggered_by']}")
+        print(f"\nRequirement: {run_row['requirement']}")
+
+        # ── Load stage artifacts from DB for display ──────────────────────────
+        stage_results = run_store.get_all_stage_results(run_id)
+        artifacts = {
+            r["stage_name"]: r["output_artifact"]
+            for r in stage_results
+            if r.get("output_artifact") is not None
+        }
+
+        print(f"\n{'='*60}")
+        _print_gate_context(gate_name, artifacts)
+        print(f"{'='*60}")
+
+        # ── Collect decision ──────────────────────────────────────────────────
+        comment = input("\nReview comment (optional, press Enter to skip): ").strip()
         decision = input("Approve? [y/n]: ").strip().lower()
         approved = decision == "y"
 
-        human_input = {"approved": approved, "approver": approver_login, "comment": comment}
+        if not approved:
+            run_store.update_run_status(run_id, "rejected")
+            print(f"\nGate '{gate_name}' rejected by {approver_login}. Run stopped.")
+            return
 
-        # Rebuild engine with PostgresSaver so it can resume the saved checkpoint
-        gateway  = AIGateway()
-        registry = ToolRegistry()
+        human_input = {"approved": True, "approver": approver_login, "comment": comment}
+
+        # ── Resume the graph ──────────────────────────────────────────────────
         memory_store = MemoryStore(session)
-        cache    = ResponseCache(session)
-        agent    = StageAgent(gateway, registry, cache)
+        cache        = ResponseCache(session)
+        registry     = ToolRegistry()
+        gateway      = AIGateway()
+        agent        = StageAgent(gateway, registry, cache)
+        nodes        = _build_nodes(agent, memory_store, run_store, audit)
 
-        all_node_names = GreenFieldScenario.node_names()
-        gate_names  = {n for n in all_node_names if n.endswith("_gate")}
-        stage_names = [n for n in all_node_names if n not in gate_names]
+        scenario_type = run_row.get("scenario_type", "greenfield")
+        scenario_cls = {
+            "greenfield": GreenFieldScenario,
+            "brownfield": BrownfieldScenario,
+            "ambiguous":  AmbiguousScenario,
+        }.get(scenario_type, GreenFieldScenario)
 
-        nodes: dict[str, Any] = {}
-        for name in stage_names:
-            nodes[name] = make_stage_node(name, agent, memory_store, run_store, audit)
-        for name in gate_names:
-            nodes[name] = make_gate_node(name, _GATE_PERMISSIONS[name], audit, hybrid_gate=None)
+        print(f"\nApproved by {approver_login}. Resuming pipeline...")
+        print("-" * 60)
 
         with psycopg.connect(database_url, autocommit=True) as conn:
             checkpointer = PostgresSaver(conn)
             engine = OrchestrationEngine(
-                scenario=GreenFieldScenario(nodes),
+                scenario=scenario_cls(nodes),
                 checkpointer=checkpointer,
             )
-            result = engine.resume(run_id, human_input)
+            engine.resume(run_id, human_input)
+            snapshot = engine.get_state(run_id)
 
-        status = "approved" if approved else "rejected"
-        print(f"\nGate '{gate}' {status} by {approver_login}.")
-        if not approved:
-            run_store.update_run_status(run_id, "rejected")
+        # ── Handle post-approval state ────────────────────────────────────────
+        if not snapshot.next:
+            # Pipeline completed
+            run_store.update_run_status(run_id, "running")  # will be updated below
+            tracker = MetricsTracker(session)
+            summary = tracker.summarize(run_id)
+            mttr    = tracker.compute_mttr(run_id)
+            state_view = {"run_id": run_id, "requirement": run_row["requirement"],
+                          "scenario_type": scenario_type}
+            _print_summary(summary, state_view, mttr)
+            score, feedback_comment = _collect_feedback()
+            run_store.update_run_completed(run_id, feedback_score=score,
+                                           feedback_comment=feedback_comment)
+            print(f"\nRun {run_id} completed.")
+            return
 
+        # Pipeline paused at the next gate
+        next_gate_info = _extract_interrupt(snapshot)
+        next_gate = next_gate_info.get("gate_name", "unknown_gate") if next_gate_info else "unknown_gate"
+        run_store.update_run_status(run_id, f"awaiting:{next_gate}")
+
+        print(f"\nPipeline paused at next gate: {next_gate}")
+        print(f"  Required permission: {_GATE_PERMISSIONS.get(next_gate, '?')}")
+        print(f"\nTo continue:")
+        print(f"  python -m orchestrator.run review --token <approver_token>")
+        print(f"  python -m orchestrator.run approve --run-id {run_id} --token <approver_token>")
+
+    except KeyboardInterrupt:
+        print("\nAborted by user.")
+        sys.exit(1)
+    except Exception as exc:
+        print(f"\nERROR: {exc}")
+        raise
     finally:
         session.close()
 
@@ -359,76 +489,26 @@ def handle_approve(run_id: str, gate: str, token: str) -> None:
 # ── Gate loop ─────────────────────────────────────────────────────────────────
 
 
-def _run_gate_loop(
-    engine: Any,
-    initial_state: Any,
-    triggered_by: str,
-    rbac: Any,
-    run_store: Any,
-) -> None:
-    """Execute the engine, pausing at each interrupt() gate to collect approval.
+def _build_nodes(agent: Any, memory_store: Any, run_store: Any, audit: Any) -> dict[str, Any]:
+    """Build the node functions dict for all stage and gate nodes."""
+    from orchestrator.scenarios.greenfield import GreenFieldScenario
+    from orchestrator.scenarios.nodes import make_gate_node, make_stage_node
 
-    LangGraph's interrupt() causes invoke() to return with the current state.
-    engine.get_state(run_id).next is non-empty when a gate is pending.
-    engine.resume(run_id, human_input) continues from the interrupt point.
-    """
-    run_id = initial_state["run_id"]
-    first = True
-    human_input: dict = {}
+    all_node_names = GreenFieldScenario.node_names()
+    gate_names  = {n for n in all_node_names if n.endswith("_gate")}
+    stage_names = [n for n in all_node_names if n not in gate_names]
 
-    while True:
-        if first:
-            engine.run(initial_state)
-            first = False
-        else:
-            engine.resume(run_id, human_input)
-
-        snapshot = engine.get_state(run_id)
-        if not snapshot.next:
-            print("\nAll pipeline stages completed.")
-            return
-
-        # Extract interrupt payload from the pending task
-        gate_info = _extract_interrupt(snapshot)
-        if gate_info is None:
-            print("\nPipeline paused (no interrupt payload). Use 'approve' command.")
-            return
-
-        gate_name           = gate_info.get("gate_name", "unknown_gate")
-        required_permission = gate_info.get("required_permission", "")
-
-        print(f"\n{'='*60}")
-        print(f"  GATE REACHED: {gate_name}")
-        print(f"  Required permission: {required_permission}")
-        _print_artifacts_summary(gate_info.get("stage_artifacts", {}))
-        print(f"{'='*60}")
-
-        while True:
-            approver_token = input("  Approver token: ").strip()
-            try:
-                approver_login = rbac.request_approval(
-                    run_id=run_id,
-                    gate_name=gate_name,
-                    required_permission=required_permission,
-                    trigger_user=triggered_by,
-                    approver_token=approver_token,
-                )
-                break
-            except Exception as exc:
-                print(f"  ERROR: {exc}")
-                print("  Try a different token.\n")
-
-        comment = input("  Comment (optional, press Enter to skip): ").strip()
-        decision = input("  Approve? [y/n]: ").strip().lower()
-        approved = decision == "y"
-
-        human_input = {"approved": approved, "approver": approver_login, "comment": comment}
-        print(f"  {'Approved' if approved else 'Rejected'} by {approver_login}.")
-
-        if not approved:
-            print(f"\nGate '{gate_name}' rejected. Run stopped.")
-            run_store.update_run_status(run_id, "rejected")
-            return
+    nodes: dict[str, Any] = {}
+    for name in stage_names:
+        nodes[name] = make_stage_node(name, agent, memory_store, run_store, audit)
+    for name in gate_names:
+        nodes[name] = make_gate_node(
+            gate_name=name,
+            required_permission=_GATE_PERMISSIONS[name],
+            audit=audit,
+            hybrid_gate=None,
+        )
+    return nodes
 
 
 def _extract_interrupt(snapshot: Any) -> dict | None:
@@ -444,6 +524,76 @@ def _extract_interrupt(snapshot: Any) -> dict | None:
 
 
 # ── Display helpers ───────────────────────────────────────────────────────────
+
+
+def _print_gate_context(gate_name: str, artifacts: dict) -> None:
+    """Print the artifact content most relevant to the approver for this gate."""
+    if not artifacts:
+        print("  (no stage artifacts available)")
+        return
+
+    import json
+
+    if gate_name == "architecture_gate":
+        _show_artifact("REQUIREMENTS ANALYSIS", artifacts.get("requirements_analysis"))
+        _show_artifact("ARCHITECTURE DESIGN", artifacts.get("architecture_design"))
+
+    elif gate_name == "schema_gate":
+        arch = artifacts.get("architecture_design")
+        if arch and isinstance(arch, dict):
+            print(f"\n  MIGRATION REVIEW")
+            notes = arch.get("migration_notes") or arch.get("migrationNotes") or arch.get("migration")
+            print(f"  Migration notes: {notes or '(see architecture design below)'}")
+        _show_artifact("ARCHITECTURE DESIGN", arch)
+
+    elif gate_name == "tests_gate":
+        _show_artifact("UNIT TESTS", artifacts.get("unit_tests"))
+        _show_artifact("INTEGRATION TESTS", artifacts.get("integration_tests"))
+
+    elif gate_name in ("pr_gate", "release_gate"):
+        _show_artifact("RELEASE READINESS", artifacts.get("release_readiness"))
+
+    else:
+        for stage, artifact in artifacts.items():
+            if not stage.endswith("_gate"):
+                _show_artifact(stage.upper().replace("_", " "), artifact)
+
+
+def _show_artifact(label: str, artifact: Any) -> None:
+    """Print a stage artifact — pretty-printed JSON so reviewers see the full content."""
+    import json
+    print(f"\n  {'─'*56}")
+    print(f"  {label}")
+    print(f"  {'─'*56}")
+    if artifact is None:
+        print("  (not available)")
+        return
+    if isinstance(artifact, dict):
+        # Pretty-print each top-level key for readability
+        for key, value in artifact.items():
+            label_key = key.replace("_", " ").upper()
+            if isinstance(value, list):
+                if value:
+                    print(f"\n  {label_key}:")
+                    for item in value:
+                        if isinstance(item, dict):
+                            for k, v in item.items():
+                                print(f"    {k}: {v}")
+                            print()
+                        else:
+                            print(f"    • {item}")
+                else:
+                    print(f"\n  {label_key}: (none)")
+            elif isinstance(value, dict):
+                print(f"\n  {label_key}:")
+                for k, v in value.items():
+                    print(f"    {k}: {v}")
+            elif isinstance(value, bool):
+                print(f"\n  {label_key}: {'YES ⚠' if value else 'No'}")
+            elif value:
+                print(f"\n  {label_key}:\n  {value}")
+    else:
+        print(f"  {artifact}")
 
 
 def _print_artifacts_summary(artifacts: dict) -> None:

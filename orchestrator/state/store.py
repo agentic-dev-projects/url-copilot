@@ -91,6 +91,14 @@ class RunStateStore:
         )
         self.session.commit()
 
+    def update_run_scenario(self, run_id: str, scenario_type: str) -> None:
+        """Update orch_runs.scenario_type once classification has completed."""
+        self.session.execute(
+            text("UPDATE orch_runs SET scenario_type = :scenario WHERE id = :id"),
+            {"scenario": scenario_type, "id": run_id},
+        )
+        self.session.commit()
+
     def update_run_status(self, run_id: str, status: str) -> None:
         """Update orch_runs.status in place (e.g. running → paused, failed)."""
         self.session.execute(
@@ -144,6 +152,18 @@ class RunStateStore:
         if row is None:
             raise KeyError(f"run_id '{run_id}' not found in orch_runs")
         return dict(row)
+
+    def get_pending_runs(self) -> list[dict]:
+        """Return all runs currently awaiting gate approval, oldest first."""
+        rows = self.session.execute(
+            text(
+                "SELECT id, requirement, scenario_type, triggered_by, status, created_at "
+                "FROM orch_runs "
+                "WHERE status LIKE 'awaiting:%' "
+                "ORDER BY created_at ASC"
+            )
+        ).mappings().all()
+        return [dict(r) for r in rows]
 
     # ── orch_stage_results ─────────────────────────────────────────────────
 

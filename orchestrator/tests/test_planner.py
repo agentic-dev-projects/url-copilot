@@ -292,12 +292,16 @@ def test_planner_calls_run_store_create_run_when_provided():
     planner = Planner(_make_classifier("greenfield"), _make_clarification(), run_store=run_store)
     state = planner.plan("req", "alice", "tok")
 
+    # create_run is called BEFORE classify (with placeholder scenario_type)
+    # so the orch_runs FK exists when CostTracker writes to orch_metrics.
     run_store.create_run.assert_called_once_with(
         run_id=state["run_id"],
         requirement="req",
-        scenario_type="greenfield",
+        scenario_type="pending",
         triggered_by="alice",
     )
+    # scenario_type is updated after classification returns the real value.
+    run_store.update_run_scenario.assert_called_once_with(state["run_id"], "greenfield")
 
 
 def test_planner_skips_run_store_when_none():

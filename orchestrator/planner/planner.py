@@ -49,6 +49,8 @@ class _RunStore(Protocol):
         triggered_by: str,
     ) -> None: ...
 
+    def update_run_scenario(self, run_id: str, scenario_type: str) -> None: ...
+
 
 class Planner:
     """Classifies a requirement, optionally runs clarification, and returns an OrchestratorState."""
@@ -90,6 +92,16 @@ class Planner:
         """
         run_id = self._generate_run_id()
 
+        # Insert orch_runs placeholder BEFORE classify so CostTracker's
+        # orch_metrics FK (run_id → orch_runs.id) is satisfied on first LLM call.
+        if self._run_store is not None:
+            self._run_store.create_run(
+                run_id=run_id,
+                requirement=requirement,
+                scenario_type="pending",
+                triggered_by=triggered_by,
+            )
+
         classification: ClassifierResult = self._classifier.classify(
             requirement=requirement,
             token=token,
@@ -109,12 +121,7 @@ class Planner:
             assumptions = clarification.assumptions
 
         if self._run_store is not None:
-            self._run_store.create_run(
-                run_id=run_id,
-                requirement=requirement,
-                scenario_type=classification.scenario_type,
-                triggered_by=triggered_by,
-            )
+            self._run_store.update_run_scenario(run_id, classification.scenario_type)
 
         return OrchestratorState(
             run_id=run_id,
@@ -122,6 +129,7 @@ class Planner:
             resolved_requirement=resolved_requirement,
             scenario_type=classification.scenario_type,
             triggered_by=triggered_by,
+            token=token,
             stage_artifacts={},
             stage_evaluations={},
             assumptions=assumptions,

@@ -105,6 +105,7 @@ class OrchestratorState(TypedDict, total=False):
     resolved_requirement:   str
     scenario_type:          str
     triggered_by:           str
+    token:                  str
     stage_artifacts:        dict[str, Any]
     stage_evaluations:      dict[str, Any]
     feature_branch:         str | None

@@ -111,7 +111,7 @@ def make_gate_node(
     """
     def node(state: OrchestratorState) -> dict:
         run_id = state["run_id"]
-        _audit(audit, run_id, EventType.GATE_REACHED,
+        _audit(audit, run_id, EventType.CHECKPOINT_REACHED,
                details={"gate": gate_name, "required_permission": required_permission})
 
         # Pause execution — CLI receives this payload via the GraphInterrupt
@@ -128,7 +128,7 @@ def make_gate_node(
         approver = approval.get("approver", "unknown") if isinstance(approval, dict) else "unknown"
 
         _audit(audit, run_id,
-               EventType.CHECKPOINT_APPROVED if approved else EventType.GATE_REACHED,
+               EventType.CHECKPOINT_APPROVED if approved else EventType.CHECKPOINT_REJECTED,
                details={"gate": gate_name, "approved": approved, "approver": approver})
 
         return {"stage_artifacts": {

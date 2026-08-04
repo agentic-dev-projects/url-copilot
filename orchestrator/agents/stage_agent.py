@@ -162,7 +162,7 @@ class StageAgent:
 
                 response = self._gateway.call(
                     GatewayRequest(
-                        token=state.get("triggered_by", ""),
+                        token=state.get("token", state.get("triggered_by", "")),
                         run_id=state["run_id"],
                         stage_name=stage_name,
                         messages=current_messages,
