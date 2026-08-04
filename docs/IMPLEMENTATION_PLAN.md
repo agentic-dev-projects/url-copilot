@@ -514,7 +514,7 @@ def set(tool_name: str, args: dict, result: Any) -> None:
 ---
 
 ### Phase 10 — Tool Registry
-**Status**: ❌ TODO
+**Status**: ✅ COMPLETE
 
 **`orchestrator/tools/filesystem.py`**:
 ```python
@@ -1004,7 +1004,7 @@ LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 | 7 | Gateway: full pipeline (11-step pipeline, wrap_openai LangSmith tracing) | ✅ |
 | 8 | Memory system (MemoryStore — seed/save/invalidate/format_for_prompt) | ✅ |
 | 9 | Cache (ResponseCache 24h TTL + ToolCache in-memory per-run) | ✅ |
-| 10 | Tool registry | ❌ |
+| 10 | Tool registry (filesystem, test_runner, github_client + OpenAI schemas) | ✅ |
 | 11 | Prompt builder | ❌ |
 | 12 | Stage agent | ❌ |
 | 13 | Orchestration engine | ❌ |
