@@ -112,6 +112,7 @@ class RunStateStore:
         run_id: str,
         feedback_score: int | None = None,
         feedback_comment: str | None = None,
+        reviewed_by: str | None = None,
     ) -> None:
         """Mark a run as completed and record optional end-user feedback (score 1–4)."""
         self.session.execute(
@@ -120,10 +121,32 @@ class RunStateStore:
                 "SET status = 'completed', "
                 "    completed_at = now(), "
                 "    feedback_score = :score, "
+                "    feedback_comment = :comment, "
+                "    reviewed_by = :reviewed_by "
+                "WHERE id = :id"
+            ),
+            {"score": feedback_score, "comment": feedback_comment,
+             "reviewed_by": reviewed_by, "id": run_id},
+        )
+        self.session.commit()
+
+    def update_run_rejected(
+        self,
+        run_id: str,
+        rejected_by: str,
+        comment: str | None = None,
+    ) -> None:
+        """Mark a run as rejected, recording who rejected it and why."""
+        self.session.execute(
+            text(
+                "UPDATE orch_runs "
+                "SET status = 'rejected', "
+                "    completed_at = now(), "
+                "    reviewed_by = :rejected_by, "
                 "    feedback_comment = :comment "
                 "WHERE id = :id"
             ),
-            {"score": feedback_score, "comment": feedback_comment, "id": run_id},
+            {"rejected_by": rejected_by, "comment": comment, "id": run_id},
         )
         self.session.commit()
 

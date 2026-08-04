@@ -99,6 +99,11 @@ def _build_parser() -> argparse.ArgumentParser:
     review_p.add_argument("--token", required=True,
                           help="Approver auth token (see orchestrator/config/users.yaml)")
 
+    # ── status ────────────────────────────────────────────────────────────────
+    status_p = sub.add_parser("status", help="Show the current status and outcome of a run")
+    status_p.add_argument("--run-id", required=True, help="Run ID to inspect")
+    status_p.add_argument("--token", required=True, help="Any valid auth token")
+
     # ── approve ───────────────────────────────────────────────────────────────
     approve_p = sub.add_parser("approve", help="Review artifacts and approve a paused gate")
     approve_p.add_argument("--run-id", required=True,
@@ -125,6 +130,8 @@ def main() -> None:
         handle_run(args.requirement, args.token)
     elif args.command == "review":
         handle_review(args.token)
+    elif args.command == "status":
+        handle_status(args.run_id, args.token)
     elif args.command == "approve":
         handle_approve(args.run_id, args.token)
 
@@ -416,8 +423,12 @@ def handle_approve(run_id: str, token: str) -> None:
         approved = decision == "y"
 
         if not approved:
-            run_store.update_run_status(run_id, "rejected")
-            print(f"\nGate '{gate_name}' rejected by {approver_login}. Run stopped.")
+            run_store.update_run_rejected(run_id, rejected_by=approver_login, comment=comment or None)
+            print(f"\nGate '{gate_name}' rejected by {approver_login}.")
+            if comment:
+                print(f"Reason: {comment}")
+            print(f"\nRun {run_id} has been stopped. The submitter can check the outcome with:")
+            print(f"  python -m orchestrator.run status --run-id {run_id} --token <token>")
             return
 
         human_input = {"approved": True, "approver": approver_login, "comment": comment}
@@ -452,7 +463,6 @@ def handle_approve(run_id: str, token: str) -> None:
         # ── Handle post-approval state ────────────────────────────────────────
         if not snapshot.next:
             # Pipeline completed
-            run_store.update_run_status(run_id, "running")  # will be updated below
             tracker = MetricsTracker(session)
             summary = tracker.summarize(run_id)
             mttr    = tracker.compute_mttr(run_id)
@@ -461,7 +471,8 @@ def handle_approve(run_id: str, token: str) -> None:
             _print_summary(summary, state_view, mttr)
             score, feedback_comment = _collect_feedback()
             run_store.update_run_completed(run_id, feedback_score=score,
-                                           feedback_comment=feedback_comment)
+                                           feedback_comment=feedback_comment,
+                                           reviewed_by=approver_login)
             print(f"\nRun {run_id} completed.")
             return
 
@@ -482,6 +493,85 @@ def handle_approve(run_id: str, token: str) -> None:
     except Exception as exc:
         print(f"\nERROR: {exc}")
         raise
+    finally:
+        session.close()
+
+
+# ── handle_status ─────────────────────────────────────────────────────────────
+
+
+def handle_status(run_id: str, token: str) -> None:
+    """Show the full current status and outcome of a run — useful after rejection."""
+    from orchestrator.gateway.auth import TokenAuthenticator
+    from orchestrator.state.store import RunStateStore
+    from service.db.session import SessionLocal
+
+    session = SessionLocal()
+    try:
+        run_store = RunStateStore(session)
+        auth      = TokenAuthenticator()
+
+        auth.resolve(token)  # just validate the token; any role can view status
+
+        try:
+            run = run_store.get_run(run_id)
+        except KeyError:
+            print(f"Run '{run_id}' not found.")
+            return
+
+        status = run.get("status", "")
+        print(f"\n{'='*60}")
+        print(f"  RUN STATUS — {run_id}")
+        print(f"{'='*60}")
+        print(f"  Requirement  : {run['requirement']}")
+        print(f"  Scenario     : {run['scenario_type']}")
+        print(f"  Submitted by : {run['triggered_by']}")
+        print(f"  Created at   : {run['created_at']}")
+
+        if status == "completed":
+            print(f"\n  Status       : COMPLETED ✓")
+            print(f"  Completed at : {run.get('completed_at')}")
+            if run.get("reviewed_by"):
+                print(f"  Approved by  : {run['reviewed_by']}")
+            if run.get("pr_url"):
+                print(f"  PR           : {run['pr_url']}")
+            if run.get("feedback_score"):
+                print(f"  Feedback     : {run['feedback_score']}/4 — {run.get('feedback_comment') or ''}")
+
+        elif status == "rejected":
+            print(f"\n  Status       : REJECTED ✗")
+            print(f"  Rejected at  : {run.get('completed_at')}")
+            if run.get("reviewed_by"):
+                print(f"  Rejected by  : {run['reviewed_by']}")
+            reason = run.get("feedback_comment")
+            print(f"  Reason       : {reason if reason else '(no comment provided)'}")
+            print(f"\n  What you can do:")
+            print(f"    • Revise your requirement and start a new run:")
+            print(f"      python -m orchestrator.run run \"<revised requirement>\" --token <your_token>")
+
+        elif status.startswith("awaiting:"):
+            gate = status.split(":", 1)[1]
+            print(f"\n  Status       : AWAITING APPROVAL")
+            print(f"  Pending gate : {gate}  (requires: {_GATE_PERMISSIONS.get(gate, '?')})")
+            print(f"\n  An approver can action this with:")
+            print(f"    python -m orchestrator.run approve --run-id {run_id} --token <approver_token>")
+
+        elif status == "running":
+            print(f"\n  Status       : RUNNING (pipeline in progress)")
+
+        else:
+            print(f"\n  Status       : {status}")
+
+        # Stage results summary
+        stage_rows = run_store.get_all_stage_results(run_id)
+        if stage_rows:
+            print(f"\n  {'STAGE':<30} {'STATUS':<12} ATTEMPT")
+            print(f"  {'-'*30} {'-'*12} {'-'*7}")
+            for r in stage_rows:
+                print(f"  {r['stage_name']:<30} {r['status']:<12} {r['attempt_number']}")
+
+        print(f"{'='*60}")
+
     finally:
         session.close()
 
