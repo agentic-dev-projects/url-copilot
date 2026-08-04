@@ -136,7 +136,7 @@ def get_short_url_by_id(db: Session, url_id: str, owner: User) -> ShortURL | Non
 
 
 def list_short_urls(
-    db: Session, owner: User, page: int = 1, limit: int = 20, active_only: bool = True
+    db: Session, owner: User, skip: int = 0, limit: int = 10, active_only: bool = True
 ) -> tuple[list[ShortURL], int]:
     """
     Return a paginated list of URLs owned by `owner`.
@@ -148,7 +148,7 @@ def list_short_urls(
     if active_only:
         query = query.filter(ShortURL.is_active == True)  # noqa: E712
     total = query.count()
-    items = query.order_by(ShortURL.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
+    items = query.order_by(ShortURL.created_at.desc()).offset(skip).limit(limit).all()
     return items, total
 
 
