@@ -156,7 +156,7 @@ To see the current status:
   python -m orchestrator.run status --run-id orch-<id> --token <your_token>
 ```
 
-> **Next approver: RELEASE_MANAGER** — use `carol_rm_token`
+> **Next approver: TECH_LEAD** — use `bob_tl_token`
 
 ---
 

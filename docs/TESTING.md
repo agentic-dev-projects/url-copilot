@@ -55,7 +55,7 @@ pip install -r requirements.txt
 
 All tests in this tier use SQLite in-memory.  No Docker, no API keys.
 
-### Service layer (45 tests)
+### Service layer (41 tests)
 
 The URL shortener business logic, API routes, and authentication.
 
@@ -83,9 +83,13 @@ Run individual modules:
 .venv/bin/python -m pytest service/tests/integration/test_urls.py -v
 ```
 
-### Orchestrator unit tests (276 tests across 12 modules)
+### Orchestrator unit tests (271 tests across 12 modules)
 
 The AI orchestration system — gateway, planner, memory, agents, tools, metrics.
+
+> **Note:** `test_state_store.py` and `test_audit.py` require a running PostgreSQL instance
+> (they test the DB persistence layer directly). Without a running DB those tests will error.
+> All other 247 orchestrator tests run without a database.
 
 ```bash
 # Run the entire orchestrator unit suite (excludes E2E)
@@ -137,9 +141,7 @@ Run individual modules (useful when iterating on a specific component):
 ```bash
 .venv/bin/python -m pytest service/tests/ orchestrator/tests/ \
   --ignore=orchestrator/tests/test_e2e_live.py -v
-```
-
----
+```---
 
 ## Tier 2 — Live E2E Tests (7 tests)
 
@@ -233,7 +235,7 @@ or call GitHub.  All AI calls, DB reads/writes, and codebase file reads are real
 | Codebase file reads | **Real** | LLM receives genuine context |
 | `interrupt()` / human gates | Mocked (auto-approve) | No CLI interaction in tests |
 | `write_file` | Mocked (no-op) | Prevents mutating `service/` source |
-| `run_tests` | Mocked (returns 45 passed) | Avoids recursive pytest call |
+| `run_tests` | Mocked (returns 41 passed) | Avoids recursive pytest call |
 | `run_linter` | Mocked (no violations) | Avoids subprocess overhead |
 | `create_branch` | Mocked (201) | No GitHub token needed |
 | `create_pr` | Mocked (201 + fake URL) | No GitHub token needed |
@@ -244,7 +246,7 @@ or call GitHub.  All AI calls, DB reads/writes, and codebase file reads are real
 
 **Unit tests should be free to run.**
 A test suite that requires API keys, running containers, or network access will get
-skipped by developers iterating locally.  All 321 unit/integration tests in tier 1
+skipped by developers iterating locally.  All 312 unit/integration tests in tier 1
 run in under 30 seconds with nothing but `pip install` — no excuses to skip them.
 
 **E2E tests should test the real thing.**

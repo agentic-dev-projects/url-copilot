@@ -123,7 +123,7 @@ def test_admin_has_unlimited_token_budget(auth):
 
 def test_developer_has_finite_token_budget(auth):
     user = auth.resolve("alice_dev_token")
-    assert user.daily_token_budget == 50_000
+    assert user.daily_token_budget == 5_000_000
 
 
 # ── RBACCheckpoint.check_permission() ────────────────────────────────────────

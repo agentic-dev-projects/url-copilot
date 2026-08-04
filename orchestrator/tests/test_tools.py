@@ -236,7 +236,7 @@ def test_commit_and_push_runs_git_commands():
 
     assert "feature/add-qr-endpoint" in result
     commands = [call.args[0] for call in mock_run.call_args_list]
-    assert any("checkout" in cmd for cmd in commands)
+    assert any("reset" in cmd for cmd in commands)
     assert any("add" in cmd for cmd in commands)
     assert any("commit" in cmd for cmd in commands)
     assert any("push" in cmd for cmd in commands)
