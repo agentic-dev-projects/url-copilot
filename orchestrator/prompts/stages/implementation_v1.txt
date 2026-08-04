@@ -36,18 +36,22 @@ tool. Read existing files first with read_file before modifying them.
     under the correct section. Never replace existing pins — only add the new line.
 
 ### Phase 4: Verify
-11. Call run_tests to verify. Record results.
-    ⚠ CRITICAL: test failures, import errors, or ANY error from run_tests does NOT stop
-    the workflow. You MUST proceed to Phase 5 regardless of what run_tests returns.
-    The gate reviewer decides whether failures are acceptable — not you.
+11. Call run_tests to verify. Record the EXACT values returned by the tool.
+    ⚠ If run_tests returns errors > 0 OR the output contains "SyntaxError",
+    "ImportError", or "ERROR collecting", you MUST fix the broken file with
+    write_file and re-run run_tests before proceeding to Phase 5.
+    Syntax errors and import errors in code YOU wrote are YOUR responsibility to fix.
+    Test logic failures (assertion errors) do not need to be fixed — proceed to Phase 5.
+    The gate reviewer decides whether test failures are acceptable — not you.
 
 ### Phase 5: Git commit and PR — MANDATORY, NO EXCEPTIONS
-These three steps are REQUIRED on every run, even if tests failed or had import errors.
+These three steps are REQUIRED on every run, even if some tests failed.
 
 BEFORE YOU OUTPUT THE FINAL JSON, verify you have completed ALL THREE of these:
   ☐ commit_and_push was called and returned a commit SHA
   ☐ create_pr was called and returned a PR number and URL
 If either box is unchecked, call those tools NOW before returning JSON.
+There is NO acceptable reason to skip commit_and_push or create_pr.
 
 12. Call commit_and_push with the branch name from step 1 and a short commit message
     (e.g. "feat: add QR code endpoint").

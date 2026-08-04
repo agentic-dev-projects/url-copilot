@@ -22,6 +22,15 @@ Write test files with write_file to service/tests/integration/. Run tests after 
 6. Do not mock the DB — use the SQLite session provided by the client fixture.
 7. After writing all test files, call run_tests to verify they pass.
 
+## CRITICAL: reading run_tests results
+run_tests returns: {"passed": N, "failed": N, "errors": N, "success": bool, "output": "..."}
+
+- Copy the EXACT values of passed, failed, and success into your JSON output.
+  Do NOT hardcode or assume — use the real numbers from the tool response.
+- If passed == 0 AND failed == 0: this means collection failed. Read the "output"
+  field for SyntaxError / ImportError. Fix the broken file and re-run run_tests.
+- If errors > 0 OR success is false: set success to false in your output.
+
 ## Output format
 Respond with a JSON object only — no prose outside the JSON:
 
