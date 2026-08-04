@@ -303,25 +303,36 @@ Add `orchestrator/config/evaluator.yaml` (content in Section 17 of architecture 
 ---
 
 ### Phase 4 — State Store
-**Status**: ❌ TODO
-**PostgreSQL reads and writes for all orch_ tables. Uses existing `service.db.session.SessionLocal`.**
+**Status**: ✅ Done
+**PostgreSQL reads and writes for orch_runs and orch_stage_results. Uses existing `service.db.session.SessionLocal`.**
 
 File: **`orchestrator/state/store.py`**
 
-Implement `RunStateStore` with these methods:
+`RunStateStore` with these methods:
 ```python
 def create_run(run_id, requirement, scenario_type, triggered_by) -> None
 def update_run_status(run_id, status) -> None
 def update_run_completed(run_id, feedback_score, feedback_comment) -> None
+def update_run_pr(run_id, pr_url, feature_branch) -> None
 def save_stage_result(result: StageResult, run_id: str) -> None
 def get_run(run_id: str) -> dict
 def get_stage_result(run_id: str, stage_name: str) -> dict | None
-def load_run_context(run_id: str) -> RunContext
+def get_all_stage_results(run_id: str) -> list[dict]
+def load_run_state(run_id: str) -> OrchestratorState   # replaces load_run_context (RunContext deleted)
 ```
 
-Uses raw SQL or SQLAlchemy Core (no new ORM models needed — tables were created in Phase 2 as raw DDL).
+Module-level `make_store()` context manager — commit on success, rollback on exception.
 
-**Verify**: Write a test that creates a run record, saves a stage result, reads it back.
+Uses raw SQL via `sqlalchemy.text()`. No new ORM models — tables created via raw DDL in Phase 2.
+
+`load_run_state()` returns `OrchestratorState` TypedDict (business view of run state for CLI
+`approve` command).  LangGraph `PostgresSaver` handles the technical graph resume checkpoint separately.
+
+**Verify** (`orchestrator/tests/test_state_store.py` — 13 integration tests, requires PostgreSQL):
+```bash
+docker-compose up -d db
+.venv/bin/python -m pytest orchestrator/tests/test_state_store.py -v
+```
 
 ---
 
@@ -1015,8 +1026,8 @@ LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 | 1 | Config files + directory skeleton | ✅ |
 | 2 | DB migration for orch_ tables | ✅ |
 | 3 | Core data models (stage.py, state.py — OrchestratorState TypedDict for LangGraph) | ✅ |
-| 3.5 | Evaluator component (hybrid LLM-as-Judge) | ❌ |
-| 4 | State store (PostgreSQL reads/writes) | ❌ |
+| 3.5 | Evaluator component (hybrid LLM-as-Judge) | ✅ |
+| 4 | State store (RunStateStore — orch_runs + orch_stage_results) | ✅ |
 | 5 | Audit logger | ❌ |
 | 6 | Gateway: auth + RBAC checkpoint | ❌ |
 | 7 | Gateway: full pipeline | ❌ |

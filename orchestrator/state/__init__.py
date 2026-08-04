@@ -3,7 +3,7 @@ orchestrator.state — PostgreSQL persistence for all orch_ tables.
 
 Files
 -----
-store.py    RunStateStore — all reads and writes to the 7 orch_ tables.
+store.py    RunStateStore — all reads and writes to the 6 orch_ tables.
 
 This package uses the same SessionLocal from service.db.session as the
 URL shortener service.  There is intentionally no second database connection
