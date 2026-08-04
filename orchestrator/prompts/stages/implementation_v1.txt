@@ -69,16 +69,26 @@ Respond with a JSON object only — no prose outside the JSON:
   "files_written": ["list of file paths written"],
   "migration_created": "migration filename or null",
   "test_results": {
-    "passed": 0,
-    "failed": 0,
-    "success": true
+    "passed": <COPY the integer from run_tests result>,
+    "failed": <COPY the integer from run_tests result>,
+    "success": <COPY the boolean from run_tests result>
   },
-  "branch_name": "the branch name you passed to create_branch",
-  "pr_number": null,
-  "pr_url": null,
+  "branch_name": "<COPY the exact branch string you passed to create_branch>",
+  "pr_number": <COPY the integer from create_pr result>,
+  "pr_url": "<COPY the URL string from create_pr result>",
   "implementation_notes": "brief description of what was implemented",
   "deviations_from_architecture": ["any intentional deviations and why, or empty list"]
 }
 
-CRITICAL: pr_url and pr_number MUST be the exact values returned by the create_pr tool call
-in step 13 above. They will be null only if create_pr failed. Do not invent or guess these values.
+CRITICAL — look back at your tool results before writing this JSON:
+
+1. branch_name: Copy the exact string you passed to create_branch in step 1.
+   It should look like "feature/add-qr-endpoint". Never write null here.
+
+2. pr_number and pr_url: Scroll back to the create_pr tool result in this conversation.
+   The tool returned {"pr_number": <int>, "pr_url": "<string>"}.
+   Copy those exact values. pr_url looks like "https://github.com/<org>/<repo>/pull/<N>".
+   Writing null here is only valid if create_pr returned an error.
+
+3. test_results: Scroll back to the run_tests tool result in this conversation.
+   Copy the exact passed/failed/errors integers. Do not use 0/0/true as defaults.

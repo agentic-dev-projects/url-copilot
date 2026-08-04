@@ -140,6 +140,34 @@ def make_stage_node(
             if stage_name == "implementation" and result.output_artifact:
                 artifact = result.output_artifact
                 branch = artifact.get("branch_name")
+
+                # Recovery: LLM sometimes calls create_pr (tool succeeds) but then
+                # returns null in the final JSON. Scan the tool_cache — which holds
+                # every tool result from this stage — for a create_pr response that
+                # contains pr_url. If found, patch the artifact instead of re-calling.
+                if not artifact.get("pr_url"):
+                    tool_cache_data = state.get("tool_cache", {})
+                    for cached_val in tool_cache_data.values():
+                        if (
+                            isinstance(cached_val, dict)
+                            and cached_val.get("pr_url")
+                            and isinstance(cached_val["pr_url"], str)
+                            and "github.com" in cached_val["pr_url"]
+                        ):
+                            artifact["pr_url"] = cached_val["pr_url"]
+                            artifact["pr_number"] = cached_val.get("pr_number")
+                            _persist_pr(
+                                session_factory, run_id,
+                                cached_val["pr_url"],
+                                branch or "",
+                            )
+                            log.pr_created(
+                                branch or "",
+                                cached_val.get("pr_number", 0),
+                                cached_val["pr_url"],
+                            )
+                            break
+
                 if branch and not artifact.get("pr_url"):
                     log.tool_called("implementation", "commit_and_push", f"branch={branch}")
                     from orchestrator.tools import github_client
