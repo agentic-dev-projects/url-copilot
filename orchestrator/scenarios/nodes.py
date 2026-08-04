@@ -31,6 +31,7 @@ This is safe for fan-out because LangGraph merges returned dicts at the node
 boundary — concurrent nodes writing different keys don't race.
 """
 
+import logging
 from typing import Any, Callable
 
 from langgraph.types import interrupt
@@ -38,6 +39,8 @@ from langgraph.types import interrupt
 from orchestrator.core.stage import StageResult, StageStatus
 from orchestrator.core.state import OrchestratorState
 from orchestrator.governance.audit import AuditLogger, EventType
+
+_log = logging.getLogger(__name__)
 
 
 def make_stage_node(
@@ -113,14 +116,23 @@ def make_stage_node(
             if stage_name == "implementation" and result.output_artifact:
                 artifact = result.output_artifact
                 branch = artifact.get("branch_name")
+                _log.info(
+                    "impl_node: branch=%r pr_url=%r files=%r",
+                    branch, artifact.get("pr_url"), artifact.get("files_written"),
+                )
                 if branch and not artifact.get("pr_url"):
+                    _log.warning(
+                        "impl_node: LLM did not create PR for branch=%r — running fallback",
+                        branch,
+                    )
                     from orchestrator.tools import github_client
                     req = state.get("requirement", "")
                     try:
-                        github_client.commit_and_push(
+                        commit_result = github_client.commit_and_push(
                             branch,
                             f"feat: {req[:60]}" if req else "feat: orchestrator implementation",
                         )
+                        _log.info("impl_node: fallback commit_and_push → %s", commit_result)
                         pr_result = github_client.create_pr(
                             title=f"feat: {req[:70]}" if req else "feat: orchestrator implementation",
                             body=f"Automated PR from orchestrator run `{run_id}`.\n\n**Requirement**: {req}",
@@ -129,11 +141,13 @@ def make_stage_node(
                         )
                         pr_number = pr_result["pr_number"]
                         pr_url = pr_result["pr_url"]
+                        _log.info("impl_node: fallback PR created #%d → %s", pr_number, pr_url)
                         artifact["pr_url"] = pr_url
                         artifact["pr_number"] = pr_number
                         # Persist to orch_runs so `status` command shows the PR
                         _persist_pr(session_factory, run_id, pr_url, branch)
                     except Exception as exc:
+                        _log.error("impl_node: fallback PR creation FAILED: %s", exc, exc_info=True)
                         artifact["pr_url"] = None
                         artifact["pr_creation_error"] = str(exc)
 

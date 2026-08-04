@@ -21,10 +21,13 @@ create_pr         — POST /repos/{owner}/{repo}/pulls
 poll_pr_status    — GET /repos/{owner}/{repo}/pulls/{number}
 """
 
+import logging
 import os
 import subprocess
 
 from github import Auth, Github, GithubException
+
+_log = logging.getLogger(__name__)
 
 _GITHUB_TOKEN_ENV = "GITHUB_TOKEN"
 _GITHUB_REPO_ENV = "GITHUB_REPO"
@@ -134,6 +137,9 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
         result = subprocess.run(
             cmd, cwd=repo_root, capture_output=True, text=True
         )
+        _log.debug("git %s → rc=%d stdout=%r stderr=%r",
+                   " ".join(cmd[1:]), result.returncode,
+                   result.stdout[:200], result.stderr[:200])
         if result.returncode != 0:
             raise RuntimeError(
                 f"git command failed: {' '.join(cmd)}\n"
@@ -141,6 +147,7 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
             )
         return result.stdout.strip()
 
+    _log.info("commit_and_push: staging service/ → branch=%s", branch_name)
     # Stage everything the LLM wrote under service/
     _run(["git", "add", "service/"])
 
@@ -150,21 +157,27 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
         cwd=repo_root, capture_output=True, text=True,
     ).stdout.strip()
     if not staged:
+        _log.error("commit_and_push: nothing staged — write_file was not called or produced no changes")
         raise RuntimeError(
             "Nothing staged — write_file produced no changes under service/. "
             "Ensure write_file was called before commit_and_push."
         )
+    _log.info("commit_and_push: staged files:\n%s", staged)
 
     # Commit to local HEAD (whatever branch we're on)
+    _log.info("commit_and_push: committing")
     _run(["git", "commit", "-m", commit_message])
 
     # Push that commit to the REMOTE feature branch (not to local HEAD's upstream)
+    _log.info("commit_and_push: pushing HEAD → refs/heads/%s", branch_name)
     _run(["git", "push", "origin", f"HEAD:refs/heads/{branch_name}"])
 
     short_sha = _run(["git", "rev-parse", "--short", "HEAD"])
+    _log.info("commit_and_push: pushed sha=%s to %s", short_sha, branch_name)
 
     # Clean up: undo the local commit so the next run starts from a clean state.
     # --mixed keeps files in the working tree but unstages them.
+    _log.info("commit_and_push: cleaning up local state")
     _run(["git", "reset", "--mixed", "HEAD~1"])
     # Restore tracked files under service/ to HEAD state (discard LLM's edits locally)
     _run(["git", "checkout", "HEAD", "--", "service/"])
@@ -173,6 +186,7 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
         ["git", "clean", "-fd", "service/"],
         cwd=repo_root, capture_output=True,
     )
+    _log.info("commit_and_push: done — remote branch %s has new commits", branch_name)
 
     return f"Committed and pushed to {branch_name}: {short_sha}"
 
@@ -198,6 +212,7 @@ def create_pr(
         GithubException: if the PR cannot be created (e.g. no commits ahead).
         EnvironmentError: if GITHUB_TOKEN or GITHUB_REPO are not set.
     """
+    _log.info("create_pr: opening PR branch=%s → %s title=%r", branch, base, title)
     repo = _repo()
     pr = repo.create_pull(
         title=title,
@@ -205,6 +220,7 @@ def create_pr(
         head=branch,
         base=base,
     )
+    _log.info("create_pr: created PR #%d at %s", pr.number, pr.html_url)
     return {"pr_number": pr.number, "pr_url": pr.html_url}
 
 

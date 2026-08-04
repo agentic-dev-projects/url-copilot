@@ -44,12 +44,23 @@ different terminal.  Set DATABASE_URL=postgresql+psycopg://... to enable it.
 """
 
 import argparse
+import logging
 import os
 import sys
 from typing import Any
 
 from dotenv import load_dotenv
 load_dotenv()  # load .env before AIGateway constructs openai.OpenAI()
+
+# Configure logging: INFO for orchestrator modules, WARNING for everything else.
+# This surfaces commit_and_push steps, PR creation, and node fallback events
+# directly in the terminal without the noise of third-party library logs.
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+logging.getLogger("orchestrator").setLevel(logging.INFO)
 
 # ── Optional langgraph check (fast, done at module load for --help) ───────────
 try:
@@ -695,6 +706,12 @@ def _show_artifact(label: str, artifact: Any) -> None:
                     print(f"    {k}: {v}")
             elif isinstance(value, bool):
                 print(f"\n  {label_key}: {'YES ⚠' if value else 'No'}")
+            elif value is None and key in ("pr_url", "pr_number", "pr_creation_error"):
+                # Always show PR-related fields even when null so reviewers can diagnose failures
+                error = artifact.get("pr_creation_error") if key == "pr_url" else None
+                if key == "pr_url":
+                    suffix = f" (error: {error})" if error else " (not created)"
+                    print(f"\n  {label_key}: None{suffix}")
             elif value:
                 print(f"\n  {label_key}:\n  {value}")
     else:

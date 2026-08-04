@@ -121,15 +121,15 @@ class AIGateway:
             # Step 5: Schema + injection validation
             self._input_validator.validate(request.messages)
 
-            # Step 6: Input guardrails (PII) — scan only user-role messages.
-            # System prompts contain codebase file contents (which legitimately
-            # include email addresses in test fixtures, auth schemas, etc.).
-            # PII risk is only in user-submitted content, not in our own prompts.
-            user_text = " ".join(
-                m.get("content") or ""
-                for m in request.messages
-                if m.get("role") == "user"
-            )
+            # Step 6: Input guardrails (PII) — scan ONLY the last user message.
+            # The messages list has this structure:
+            #   [system, user(codebase), ...history..., user(task instruction)]
+            # The codebase context message (Layer 2) is also role=user and
+            # legitimately contains emails in test fixtures and UUIDs that the
+            # credit-card regex matches.  Only the final user message (Layer 7)
+            # contains the actual user-submitted requirement text.
+            user_messages = [m for m in request.messages if m.get("role") == "user"]
+            user_text = user_messages[-1].get("content") or "" if user_messages else ""
             self._guardrails.check_input(user_text)
 
             # Step 7: Start timing span
