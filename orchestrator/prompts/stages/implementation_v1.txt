@@ -14,7 +14,13 @@ tool. Read existing files first with read_file before modifying them.
 ### Phase 2: Read existing code
 2. Read existing files with read_file to understand patterns before writing anything.
 
-### Phase 3: Write files
+### Phase 3: Write files — MANDATORY, NO EXCEPTIONS
+⚠ write_file MUST be called at least once before commit_and_push.
+   If you skip write_file, commit_and_push will fail with WRITE_FILE_REQUIRED.
+   Even if you read existing files and the feature appears to already exist,
+   you MUST still call write_file to write the implementation to the branch.
+   The feature branch does not have any files committed yet — you must write them.
+
 3. Follow the existing code patterns exactly — look at similar files before writing.
 4. Write_file is restricted to service/ and requirements.txt — do not write elsewhere.
 5. All new SQLAlchemy models go in service/models/. Add imports to service/models/__init__.py.

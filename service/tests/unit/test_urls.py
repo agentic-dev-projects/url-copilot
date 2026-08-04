@@ -26,7 +26,7 @@ def test_generate_qr_code_endpoint_happy_path(client: TestClient):
 
 def test_generate_qr_code_endpoint_unauthenticated(client: TestClient):
     res = client.get("/api/v1/urls/any-id/qr")
-    assert res.status_code == 422  # missing x-api-key header
+    assert res.status_code == 401  # missing x-api-key header
 
 
 def test_generate_qr_code_endpoint_not_found(client: TestClient):

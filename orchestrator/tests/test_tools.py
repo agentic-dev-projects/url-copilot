@@ -219,9 +219,9 @@ def test_create_pr_returns_number_and_url():
         mock_repo.return_value = repo
 
         from orchestrator.tools.github_client import create_pr
-        number, url = create_pr("Add QR endpoint", "Description here", "feature/qr")
-        assert number == 42
-        assert "42" in url
+        result = create_pr("Add QR endpoint", "Description here", "feature/qr")
+        assert result["pr_number"] == 42
+        assert "42" in result["pr_url"]
 
 
 def test_commit_and_push_runs_git_commands():
@@ -276,7 +276,7 @@ def test_poll_pr_status_returns_merged_false_when_open():
 
 
 def test_registry_has_nine_schemas():
-    assert len(TOOL_SCHEMAS) == 9
+    assert len(TOOL_SCHEMAS) == 10
 
 
 def test_all_schemas_have_required_keys():
@@ -297,7 +297,7 @@ def test_registry_get_schemas_returns_list():
     registry = ToolRegistry()
     schemas = registry.get_schemas()
     assert isinstance(schemas, list)
-    assert len(schemas) == 9
+    assert len(schemas) == 10
 
 
 # ── registry: execute dispatch ────────────────────────────────────────────────

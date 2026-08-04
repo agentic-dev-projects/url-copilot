@@ -18,7 +18,7 @@ from service.core.rate_limiter import is_rate_limited
 
 
 def get_current_user(
-    x_api_key: str = Header(..., description="API key in the format sk_<token>"),
+    x_api_key: str | None = Header(default=None, description="API key in the format sk_<token>"),
     db: Session = Depends(get_db),
 ) -> User:
     """
@@ -26,6 +26,11 @@ def get_current_user(
 
     Raises HTTP 401 if the key is missing, invalid, or belongs to an inactive user.
     """
+    if x_api_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key is required",
+        )
     user = get_user_by_api_key(db, raw_key=x_api_key)
     if user is None:
         raise HTTPException(

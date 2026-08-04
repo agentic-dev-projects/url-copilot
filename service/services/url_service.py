@@ -95,6 +95,10 @@ def delete_short_url(db: Session, short_url: ShortURL) -> None:
 
 def generate_qr_code(url: str) -> BytesIO:
     """Generate a QR code image for the given URL."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(f"Invalid URL: {url!r}")
     qr = qrcode.make(url)
     img_byte_arr = BytesIO()
     qr.save(img_byte_arr, format='PNG')

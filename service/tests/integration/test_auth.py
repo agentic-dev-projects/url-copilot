@@ -49,6 +49,6 @@ def test_rotate_key_invalidates_old_key(client: TestClient):
     assert res.status_code == 401
 
 
-def test_request_without_api_key_returns_422(client: TestClient):
+def test_request_without_api_key_returns_401(client: TestClient):
     res = client.get("/api/v1/urls")
-    assert res.status_code == 422
+    assert res.status_code == 401

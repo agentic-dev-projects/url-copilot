@@ -47,20 +47,14 @@ import argparse
 import logging
 import os
 import sys
+import time
 from typing import Any
 
 from dotenv import load_dotenv
 load_dotenv()  # load .env before AIGateway constructs openai.OpenAI()
 
-# Configure logging: INFO for orchestrator modules, WARNING for everything else.
-# This surfaces commit_and_push steps, PR creation, and node fallback events
-# directly in the terminal without the noise of third-party library logs.
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
-logging.getLogger("orchestrator").setLevel(logging.INFO)
+from orchestrator.logging import PipelineLogger, setup_logging
+setup_logging()
 
 # ── Optional langgraph check (fast, done at module load for --help) ───────────
 try:
@@ -186,6 +180,8 @@ def handle_run(requirement: str, token: str) -> None:
     from service.db.session import SessionLocal
 
     session = SessionLocal()
+    log: PipelineLogger | None = None
+    t_run_start = 0.0
     try:
         run_store    = RunStateStore(session)
         memory_store = MemoryStore(session)
@@ -223,7 +219,11 @@ def handle_run(requirement: str, token: str) -> None:
             for a in state["assumptions"]:
                 print(f"  • {a}")
 
-        nodes = _build_nodes(gateway, registry, SessionLocal)
+        log = PipelineLogger(run_id=run_id, actor=user.github_login, role=user.role)
+        log.run_started(requirement=requirement, scenario=state["scenario_type"])
+        t_run_start = time.perf_counter()
+
+        nodes = _build_nodes(gateway, registry, SessionLocal, actor=user.github_login, actor_role=user.role)
 
         scenario_cls = {
             "greenfield": GreenFieldScenario,
@@ -248,6 +248,12 @@ def handle_run(requirement: str, token: str) -> None:
         if not snapshot.next:
             # Pipeline completed without hitting any gate (unusual)
             run_store.update_run_status(run_id, "completed")
+            if log:
+                log.run_completed(
+                    duration_ms=(time.perf_counter() - t_run_start) * 1000,
+                    stages_done=0,
+                    stages_failed=0,
+                )
             print(f"\nPipeline completed for run {run_id}.")
             return
 
@@ -268,6 +274,8 @@ def handle_run(requirement: str, token: str) -> None:
         print("\nAborted by user.")
         sys.exit(1)
     except Exception as exc:
+        if log:
+            log.run_failed(error=str(exc))
         print(f"\nERROR: {exc}")
         raise
     finally:
@@ -443,9 +451,10 @@ def handle_approve(run_id: str, token: str) -> None:
         human_input = {"approved": True, "approver": approver_login, "comment": comment}
 
         # ── Resume the graph ──────────────────────────────────────────────────
+        approver_role = auth.resolve(token).role
         registry     = ToolRegistry()
         gateway      = AIGateway()
-        nodes        = _build_nodes(gateway, registry, SessionLocal)
+        nodes        = _build_nodes(gateway, registry, SessionLocal, actor=approver_login, actor_role=approver_role)
 
         scenario_type = run_row.get("scenario_type", "greenfield")
         scenario_cls = {
@@ -479,6 +488,18 @@ def handle_approve(run_id: str, token: str) -> None:
             run_store.update_run_completed(run_id, feedback_score=score,
                                            feedback_comment=feedback_comment,
                                            reviewed_by=approver_login)
+
+            stage_results_done = run_store.get_all_stage_results(run_id)
+            stages_done   = sum(1 for r in stage_results_done if r.get("status") == "completed")
+            stages_failed = sum(1 for r in stage_results_done if r.get("status") == "failed")
+            final_run = run_store.get_run(run_id)
+            PipelineLogger(run_id=run_id, actor=approver_login, role=approver_role).run_completed(
+                duration_ms=summary.get("total_llm_latency_ms", 0),
+                stages_done=stages_done,
+                stages_failed=stages_failed,
+                pr_url=final_run.get("pr_url"),
+                cost_usd=summary.get("total_cost_usd"),
+            )
             print(f"\nRun {run_id} completed.")
             return
 
@@ -585,7 +606,13 @@ def handle_status(run_id: str, token: str) -> None:
 # ── Gate loop ─────────────────────────────────────────────────────────────────
 
 
-def _build_nodes(gateway: Any, registry: Any, session_factory: Any) -> dict[str, Any]:
+def _build_nodes(
+    gateway: Any,
+    registry: Any,
+    session_factory: Any,
+    actor: str = "system",
+    actor_role: str = "DEVELOPER",
+) -> dict[str, Any]:
     """Build the node functions dict for all stage and gate nodes.
 
     Each node closes over gateway, registry, and session_factory.
@@ -601,12 +628,17 @@ def _build_nodes(gateway: Any, registry: Any, session_factory: Any) -> dict[str,
 
     nodes: dict[str, Any] = {}
     for name in stage_names:
-        nodes[name] = make_stage_node(name, gateway, registry, session_factory)
+        nodes[name] = make_stage_node(
+            name, gateway, registry, session_factory,
+            actor=actor, actor_role=actor_role,
+        )
     for name in gate_names:
         nodes[name] = make_gate_node(
             gate_name=name,
             required_permission=_GATE_PERMISSIONS[name],
             session_factory=session_factory,
+            actor=actor,
+            actor_role=actor_role,
         )
     return nodes
 

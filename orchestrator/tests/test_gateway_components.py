@@ -141,10 +141,10 @@ def test_rate_limiter_allows_calls_under_limit():
 def test_rate_limiter_blocks_at_limit():
     rl = RateLimiter()
     user = _make_user("bob")
-    for _ in range(20):
+    for _ in range(200):
         rl.check(user)
     with pytest.raises(RateLimitError):
-        rl.check(user)   # 21st call — should raise
+        rl.check(user)   # 201st call — should raise
 
 
 def test_rate_limiter_tracks_users_independently():

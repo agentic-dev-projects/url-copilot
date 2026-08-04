@@ -51,6 +51,7 @@ adapt, not crash the whole run.
 
 import json
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -111,6 +112,7 @@ class StageAgent:
         stage_name: str,
         state: OrchestratorState,
         memory_store: MemoryStore,
+        pipeline_logger: Any | None = None,
         attempt_number: int = 1,
     ) -> StageResult:
         """Execute a stage and return its result.
@@ -136,7 +138,10 @@ class StageAgent:
         cache_key = _prompt_cache_key(messages)
         cached = self._cache.get(cache_key, self._model)
         if cached is not None:
-            _log_cache_hit(stage_name, state.get("run_id", ""), self._model)
+            if pipeline_logger:
+                pipeline_logger.stage_cache_hit(stage_name)
+            else:
+                _log_cache_hit(stage_name, state.get("run_id", ""), self._model)
             return StageResult(
                 stage_name=stage_name,
                 status=StageStatus.COMPLETED,
@@ -194,20 +199,37 @@ class StageAgent:
                     except json.JSONDecodeError:
                         args = {}
 
+                    args_summary = ", ".join(
+                        f"{k}={str(v)[:40]}" for k, v in list(args.items())[:3]
+                    )
+                    if pipeline_logger:
+                        pipeline_logger.tool_called(stage_name, tool_name, args_summary)
+
+                    _t0 = time.perf_counter()
                     try:
                         tool_result = self._registry.execute(tool_name, args, tool_cache)
+                        _latency = (time.perf_counter() - _t0) * 1000
                         result_content = (
                             str(tool_result.error)
                             if tool_result.error
                             else json.dumps(tool_result.result)
                         )
+                        if pipeline_logger:
+                            pipeline_logger.tool_completed(
+                                stage_name, tool_name,
+                                result_content[:120],
+                                _latency,
+                            )
                     except KeyError:
+                        _latency = (time.perf_counter() - _t0) * 1000
                         result_content = (
                             f"Error: tool '{tool_name}' is not available. "
                             f"Available tools: read_file, write_file, list_directory, "
                             f"search_codebase, run_tests, run_linter, create_branch, "
                             f"commit_and_push, create_pr, poll_pr_status."
                         )
+                        if pipeline_logger:
+                            pipeline_logger.tool_error(stage_name, tool_name, f"tool not found: {tool_name}")
                     conversation_history.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],

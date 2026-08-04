@@ -163,10 +163,10 @@ def test_builder_instruction_contains_requirement():
 
 def test_builder_instruction_contains_run_id():
     builder = PromptBuilder()
-    state = _make_state(run_id="run-xyz-999")
-    messages, _ = builder.build("architecture_design", state, _mock_memory())
+    state = _make_state(run_id="orch-abc12345")
+    messages, _ = builder.build("implementation", state, _mock_memory())
     instruction = messages[-1]["content"]
-    assert "run-xyz-999" in instruction
+    assert "abc12345" in instruction
 
 
 def test_builder_instruction_contains_scenario():
@@ -257,21 +257,21 @@ def test_builder_no_prior_artifacts_when_empty():
 
 
 def test_all_stages_have_context_files_entry():
-    expected = {"classifier", "architecture_design", "implementation", "tests", "release_readiness"}
+    expected = {"classifier", "architecture_design", "implementation", "unit_tests", "integration_tests", "release_readiness"}
     assert expected.issubset(set(STAGE_CONTEXT_FILES.keys()))
 
 
 def test_all_stages_have_prior_deps_entry():
-    expected = {"classifier", "architecture_design", "implementation", "tests", "release_readiness"}
+    expected = {"classifier", "architecture_design", "implementation", "unit_tests", "integration_tests", "release_readiness"}
     assert expected.issubset(set(PRIOR_STAGE_DEPENDENCIES.keys()))
 
 
 def test_architecture_has_no_prior_deps():
-    assert PRIOR_STAGE_DEPENDENCIES["architecture_design"] == []
+    assert PRIOR_STAGE_DEPENDENCIES["architecture_design"] == ["requirements_analysis"]
 
 
 def test_release_readiness_depends_on_all_prior_stages():
     deps = PRIOR_STAGE_DEPENDENCIES["release_readiness"]
     assert "architecture_design" in deps
     assert "implementation" in deps
-    assert "tests" in deps
+    assert "unit_tests" in deps

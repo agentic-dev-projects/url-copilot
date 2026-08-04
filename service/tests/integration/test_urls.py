@@ -81,6 +81,6 @@ def test_redirect_unknown_code_returns_404(client: TestClient):
     assert res.status_code == 404
 
 
-def test_unauthenticated_shorten_returns_422(client: TestClient):
+def test_unauthenticated_shorten_returns_401(client: TestClient):
     res = client.post("/api/v1/urls", json={"original_url": "https://example.com"})
-    assert res.status_code == 422
+    assert res.status_code == 401

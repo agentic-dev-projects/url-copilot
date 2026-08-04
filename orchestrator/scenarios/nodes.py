@@ -32,6 +32,7 @@ boundary — concurrent nodes writing different keys don't race.
 """
 
 import logging
+import time
 from typing import Any, Callable
 
 from langgraph.types import interrupt
@@ -39,8 +40,7 @@ from langgraph.types import interrupt
 from orchestrator.core.stage import StageResult, StageStatus
 from orchestrator.core.state import OrchestratorState
 from orchestrator.governance.audit import AuditLogger, EventType
-
-_log = logging.getLogger(__name__)
+from orchestrator.logging import PipelineLogger
 
 
 def make_stage_node(
@@ -48,6 +48,8 @@ def make_stage_node(
     gateway: Any,            # AIGateway
     registry: Any,           # ToolRegistry
     session_factory: Any,    # Callable[[], Session] — called fresh per invocation
+    actor: str = "system",
+    actor_role: str = "DEVELOPER",
 ) -> Callable[[OrchestratorState], dict]:
     """Factory: returns a LangGraph node function for stage_name.
 
@@ -72,6 +74,11 @@ def make_stage_node(
         from orchestrator.memory.store import MemoryStore
         from orchestrator.state.store import RunStateStore
 
+        run_id = state["run_id"]
+        log = PipelineLogger(run_id=run_id, actor=actor, role=actor_role)
+        t0 = time.perf_counter()
+        log.stage_started(stage_name)
+
         session = session_factory()
         try:
             cache        = ResponseCache(session)
@@ -80,10 +87,9 @@ def make_stage_node(
             audit        = AuditLogger(session)
             agent        = StageAgent(gateway, registry, cache)
 
-            run_id = state["run_id"]
             _audit(audit, run_id, EventType.STAGE_STARTED, details={"stage": stage_name})
 
-            result: StageResult = agent.run(stage_name, state, memory_store)
+            result: StageResult = agent.run(stage_name, state, memory_store, pipeline_logger=log)
             run_store.save_stage_result(result, run_id)
 
             if result.cache_hit:
@@ -102,6 +108,8 @@ def make_stage_node(
                 )
 
             if result.status == StageStatus.FAILED:
+                duration_ms = (time.perf_counter() - t0) * 1000
+                log.stage_failed(stage_name, result.error_message or "stage failed", duration_ms)
                 _audit(audit, run_id, EventType.STAGE_FAILED,
                        stage_name=stage_name, details={"error": result.error_message})
                 return {"stage_artifacts": {
@@ -111,20 +119,29 @@ def make_stage_node(
 
             _audit(audit, run_id, EventType.STAGE_COMPLETED, stage_name=stage_name)
 
+            # Collect stage-specific completion fields for the log event
+            extra: dict = {}
+            if stage_name in ("unit_tests", "integration_tests") and result.output_artifact:
+                extra["passed"] = result.output_artifact.get("passed", 0)
+                extra["failed"] = result.output_artifact.get("failed", 0)
+            elif stage_name == "implementation" and result.output_artifact:
+                for _k in ("branch_name", "pr_url", "pr_number"):
+                    _v = result.output_artifact.get(_k)
+                    if _v is not None:
+                        extra[_k] = _v
+            elif stage_name == "release_readiness" and result.output_artifact:
+                _rts = result.output_artifact.get("ready_to_ship")
+                if _rts is not None:
+                    extra["ready_to_ship"] = _rts
+            log.stage_completed(stage_name, (time.perf_counter() - t0) * 1000, **extra)
+
             # For implementation: if the LLM did not call commit_and_push / create_pr,
             # do it here as a fallback so a PR is always created.
             if stage_name == "implementation" and result.output_artifact:
                 artifact = result.output_artifact
                 branch = artifact.get("branch_name")
-                _log.info(
-                    "impl_node: branch=%r pr_url=%r files=%r",
-                    branch, artifact.get("pr_url"), artifact.get("files_written"),
-                )
                 if branch and not artifact.get("pr_url"):
-                    _log.warning(
-                        "impl_node: LLM did not create PR for branch=%r — running fallback",
-                        branch,
-                    )
+                    log.tool_called("implementation", "commit_and_push", f"branch={branch}")
                     from orchestrator.tools import github_client
                     req = state.get("requirement", "")
                     try:
@@ -132,7 +149,8 @@ def make_stage_node(
                             branch,
                             f"feat: {req[:60]}" if req else "feat: orchestrator implementation",
                         )
-                        _log.info("impl_node: fallback commit_and_push → %s", commit_result)
+                        log.tool_completed("implementation", "commit_and_push", commit_result, 0)
+                        log.tool_called("implementation", "create_pr", f"branch={branch}")
                         pr_result = github_client.create_pr(
                             title=f"feat: {req[:70]}" if req else "feat: orchestrator implementation",
                             body=f"Automated PR from orchestrator run `{run_id}`.\n\n**Requirement**: {req}",
@@ -141,13 +159,13 @@ def make_stage_node(
                         )
                         pr_number = pr_result["pr_number"]
                         pr_url = pr_result["pr_url"]
-                        _log.info("impl_node: fallback PR created #%d → %s", pr_number, pr_url)
+                        log.pr_created(branch, pr_number, pr_url)
                         artifact["pr_url"] = pr_url
                         artifact["pr_number"] = pr_number
                         # Persist to orch_runs so `status` command shows the PR
                         _persist_pr(session_factory, run_id, pr_url, branch)
                     except Exception as exc:
-                        _log.error("impl_node: fallback PR creation FAILED: %s", exc, exc_info=True)
+                        log.pr_error(branch, str(exc))
                         artifact["pr_url"] = None
                         artifact["pr_creation_error"] = str(exc)
 
@@ -175,6 +193,8 @@ def make_gate_node(
     required_permission: str,
     session_factory: Any,    # Callable[[], Session]
     hybrid_gate: Any = None, # HybridGate | None — None skips AI evaluation
+    actor: str = "system",
+    actor_role: str = "DEVELOPER",
 ) -> Callable[[OrchestratorState], dict]:
     """Factory: returns a LangGraph gate node that interrupt()s for human approval.
 
@@ -186,14 +206,18 @@ def make_gate_node(
     def node(state: OrchestratorState) -> dict:
         from orchestrator.governance.audit import AuditLogger
 
+        run_id = state["run_id"]
+        log = PipelineLogger(run_id=run_id, actor=actor, role=actor_role)
+
         session = session_factory()
         try:
             audit  = AuditLogger(session)
-            run_id = state["run_id"]
             _audit(audit, run_id, EventType.CHECKPOINT_REACHED,
                    details={"gate": gate_name, "required_permission": required_permission})
         finally:
             session.close()
+
+        log.gate_reached(gate_name, required_permission, triggered_by=state.get("triggered_by", ""))
 
         # Pause — CLI receives this payload via GraphInterrupt
         approval = interrupt({
@@ -206,6 +230,7 @@ def make_gate_node(
         # Resumed here after CLI calls graph.invoke(Command(resume=human_input), config)
         approved = approval.get("approved", False) if isinstance(approval, dict) else False
         approver = approval.get("approver", "unknown") if isinstance(approval, dict) else "unknown"
+        comment  = approval.get("comment", "") if isinstance(approval, dict) else ""
 
         session2 = session_factory()
         try:
@@ -215,6 +240,11 @@ def make_gate_node(
                    details={"gate": gate_name, "approved": approved, "approver": approver})
         finally:
             session2.close()
+
+        if approved:
+            log.gate_approved(gate_name, approver, approver_role="APPROVER", comment=comment)
+        else:
+            log.gate_rejected(gate_name, approver, approver_role="APPROVER", comment=comment)
 
         return {"stage_artifacts": {
             **state.get("stage_artifacts", {}),

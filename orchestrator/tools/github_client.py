@@ -157,10 +157,12 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
         cwd=repo_root, capture_output=True, text=True,
     ).stdout.strip()
     if not staged:
-        _log.error("commit_and_push: nothing staged — write_file was not called or produced no changes")
         raise RuntimeError(
-            "Nothing staged — write_file produced no changes under service/. "
-            "Ensure write_file was called before commit_and_push."
+            "WRITE_FILE_REQUIRED: Nothing is staged under service/. "
+            "commit_and_push requires write_file to be called first. "
+            "Required action: call write_file for each implementation file, "
+            "then call commit_and_push again. "
+            "Do NOT retry commit_and_push without first calling write_file."
         )
     _log.info("commit_and_push: staged files:\n%s", staged)
 
