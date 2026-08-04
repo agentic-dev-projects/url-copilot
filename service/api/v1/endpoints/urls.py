@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+from fastapi.responses import JSONResponse
+from fastapi.security.api_key import APIKey
 
 from service.api.deps import check_rate_limit, get_current_user
 from service.config import settings
@@ -12,6 +14,7 @@ from service.schemas.url import (
     URLListResponse,
     URLResponse,
     UpdateURLRequest,
+    QRResponseSchema
 )
 from service.services import url_service
 
@@ -137,3 +140,27 @@ def delete_url(
     if not short_url:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found")
     url_service.delete_short_url(db, short_url=short_url)
+
+
+@router.get(
+    "/{url_id}/qr",
+    response_model=QRResponseSchema,
+    summary="Generate and return a QR code for the original URL associated with the given short URL ID",
+    dependencies=[Depends(check_rate_limit)],
+)
+def generate_qr_code(
+    url_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    api_key: APIKey = Depends(get_current_user)
+) -> JSONResponse:
+    short_url = url_service.get_short_url_by_id(db, url_id=url_id, owner=current_user)
+    if not short_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found")
+    try:
+        qr_image = url_service.generate_qr_code(short_url.original_url)
+        qr_code_data_uri = f"data:image/png;base64,{qr_image.read().encode('base64').decode()}"
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+    return JSONResponse(content={"qr_code_url": qr_code_data_uri})
