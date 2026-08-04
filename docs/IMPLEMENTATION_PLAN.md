@@ -364,52 +364,24 @@ satisfies SOC2 CC7.2.
 ---
 
 ### Phase 6 — Gateway: Auth and RBAC
-**Status**: ❌ TODO
-**Start with auth — it is the entry point for all CLI commands.**
+**Status**: ✅ Done
 
-**`orchestrator/gateway/auth.py`** — `TokenAuthenticator`:
-```python
-def resolve(token: str) -> CurrentUser:
-    # Load orchestrator/config/users.yaml
-    # Look up token key → return CurrentUser dataclass
-    # Raise AuthenticationError if token not found
+**`orchestrator/gateway/auth.py`** — `TokenAuthenticator` + `CurrentUser` + `AuthenticationError`:
+- Loads `users.yaml` + `rbac.yaml` once at construction
+- `resolve(token) -> CurrentUser` — raises `AuthenticationError` if not found
+- `_expand_permissions(role)` — recursively walks `inherits` chain, unions all permission sets
+- `CurrentUser`: `github_login`, `email`, `role`, `permissions: list[str]`, `daily_token_budget`
+
+**`orchestrator/governance/checkpoint.py`** — `RBACCheckpoint` + `AuthorizationError` + `FourEyesViolationError`:
+- `check_permission(user, permission)` — raises `AuthorizationError` if not in user.permissions
+- `verify_four_eyes(approver_login, triggered_by)` — raises `FourEyesViolationError` if same
+- `request_approval(*, run_id, required_permission, trigger_user, approver_token) -> str` — resolves token, checks permission, four-eyes, returns approver github_login. CLI prompting and audit logging are `HybridGate`'s responsibility.
+
+**Verify** (`orchestrator/tests/test_auth_rbac.py` — 22 unit tests, no DB needed):
+```bash
+.venv/bin/python -m pytest orchestrator/tests/test_auth_rbac.py -v
+# 22 passed in 0.06s
 ```
-
-**`CurrentUser` dataclass** (define in `gateway/auth.py`):
-```python
-@dataclass
-class CurrentUser:
-    github_login: str
-    email: str
-    role: str
-    permissions: list[str]
-    daily_token_budget: int  # -1 = unlimited
-```
-
-**`orchestrator/governance/checkpoint.py`** — `RBACCheckpoint`:
-```python
-def check_permission(user: CurrentUser, permission: str) -> None:
-    # Raise AuthorizationError if user.permissions does not contain permission
-    # Permissions are inherited: ADMIN has all, RELEASE_MANAGER has ADMIN's minus manage_users, etc.
-
-def request_approval(
-    run_id: str,
-    gate_name: str,
-    required_permission: str,
-    run_triggered_by: str,
-    approver_token: str
-) -> str:  # returns comment or ""
-    # 1. Resolve approver_token → CurrentUser
-    # 2. check_permission(approver, required_permission)
-    # 3. Four-eyes: approver.github_login != run_triggered_by
-    # 4. Show gate summary, prompt [y/n]
-    # 5. If approved: audit.log(CHECKPOINT_APPROVED), return comment
-    # 6. If rejected: audit.log(CHECKPOINT_REJECTED), raise ApprovalRejectedError
-```
-
-Load permissions from `orchestrator/config/rbac.yaml`. Respect `inherits` field to build full permission list per role.
-
-**Verify**: Test that `alice` (DEVELOPER) cannot call `check_permission(alice, "approve_architecture")` without raising. Test that `bob` (TECH_LEAD) can.
 
 ---
 
@@ -1028,7 +1000,7 @@ LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 | 3.5 | Evaluator component (hybrid LLM-as-Judge) | ✅ |
 | 4 | State store (RunStateStore — orch_runs + orch_stage_results) | ✅ |
 | 5 | Audit logger (AuditLogger + EventType — append-only orch_audit_events) | ✅ |
-| 6 | Gateway: auth + RBAC checkpoint | ❌ |
+| 6 | Gateway: auth + RBAC checkpoint (TokenAuthenticator, RBACCheckpoint, four-eyes) | ✅ |
 | 7 | Gateway: full pipeline | ❌ |
 | 8 | Memory system | ❌ |
 | 9 | Cache (response + tool) | ❌ |
