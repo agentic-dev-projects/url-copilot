@@ -149,6 +149,42 @@ def safe_tools():
 
 
 @pytest.fixture()
+def seed_run(session):
+    """Pre-insert an orch_runs row so CostTracker's FK constraint is satisfied.
+
+    RequirementClassifier and ClarificationLoop use a fallback run_id
+    ("classify", "clarify-questions") when no run_id is provided.
+    orch_metrics.run_id has a FK to orch_runs.id, so a parent row must exist
+    before any orch_metrics INSERT happens inside AIGateway.call().
+
+    Yields the run_id so tests can pass it to classify() / loop.run().
+    Deletes the row (and any orch_metrics children) after the test.
+    """
+    from sqlalchemy import text
+
+    run_id = _e2e_run_id()
+    session.execute(
+        text(
+            "INSERT INTO orch_runs (id, requirement, scenario_type, status, triggered_by) "
+            "VALUES (:id, :req, 'greenfield', 'running', 'dave')"
+        ),
+        {"id": run_id, "req": "e2e classifier/clarification test"},
+    )
+    session.commit()
+    yield run_id
+    # cleanup
+    for table in ("orch_metrics", "orch_audit_events", "orch_stage_results", "orch_runs"):
+        try:
+            session.execute(text(f"DELETE FROM {table} WHERE run_id = :rid"), {"rid": run_id})  # noqa: S608
+        except Exception:
+            pass
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+
+
+@pytest.fixture()
 def db_cleanup(session):
     """Collect run_ids during a test and delete all related rows after."""
     run_ids: list[str] = []
@@ -160,20 +196,12 @@ def db_cleanup(session):
     from sqlalchemy import text
     for run_id in run_ids:
         for table in ("orch_stage_results", "orch_audit_events", "orch_metrics",
-                      "orch_memory", "orch_cache", "orch_runs"):
+                      "orch_memory", "orch_runs"):
             try:
-                if table in ("orch_memory", "orch_cache"):
-                    # orch_memory has source_run_id (nullable); orch_cache has no run_id
-                    if table == "orch_memory":
-                        session.execute(
-                            text("DELETE FROM orch_memory WHERE source_run_id = :rid"),
-                            {"rid": run_id},
-                        )
-                else:
-                    session.execute(
-                        text(f"DELETE FROM {table} WHERE run_id = :rid"),  # noqa: S608
-                        {"rid": run_id},
-                    )
+                session.execute(
+                    text(f"DELETE FROM {table} WHERE run_id = :rid"),  # noqa: S608
+                    {"rid": run_id},
+                )
             except Exception:
                 pass
     try:
@@ -246,7 +274,7 @@ def _build_engine(gateway, session, run_store):
 class TestClassifierScenarios:
     """Verify RequirementClassifier correctly buckets all three scenario types."""
 
-    def test_greenfield_requirement(self, session, db_cleanup):
+    def test_greenfield_requirement(self, session, seed_run):
         """A clear new-feature request should be classified as greenfield."""
         from orchestrator.gateway.gateway import AIGateway
         from orchestrator.planner.classifier import RequirementClassifier
@@ -256,6 +284,7 @@ class TestClassifierScenarios:
             "Add a GET /api/v1/urls/{short_code}/qr endpoint that returns "
             "a PNG QR code image for the given short URL.",
             token=_TEST_TOKEN,
+            run_id=seed_run,
         )
         print(f"\n[greenfield] scenario={result.scenario_type} confidence={result.confidence:.2f}")
         print(f"  reasoning: {result.reasoning[:120]}")
@@ -263,7 +292,7 @@ class TestClassifierScenarios:
         assert result.scenario_type == "greenfield"
         assert result.confidence >= 0.6
 
-    def test_brownfield_requirement(self, session, db_cleanup):
+    def test_brownfield_requirement(self, session, seed_run):
         """A request to modify existing behavior should be classified as brownfield."""
         from orchestrator.gateway.gateway import AIGateway
         from orchestrator.planner.classifier import RequirementClassifier
@@ -273,6 +302,7 @@ class TestClassifierScenarios:
             "Change the redirect endpoint to return a 302 instead of 301 "
             "and add an X-Redirected-By header with the value 'url-copilot'.",
             token=_TEST_TOKEN,
+            run_id=seed_run,
         )
         print(f"\n[brownfield] scenario={result.scenario_type} confidence={result.confidence:.2f}")
         print(f"  reasoning: {result.reasoning[:120]}")
@@ -280,7 +310,7 @@ class TestClassifierScenarios:
         assert result.scenario_type == "brownfield"
         assert result.confidence >= 0.6
 
-    def test_ambiguous_requirement(self, session, db_cleanup):
+    def test_ambiguous_requirement(self, session, seed_run):
         """A vague request should be classified as ambiguous with a clarifying question."""
         from orchestrator.gateway.gateway import AIGateway
         from orchestrator.planner.classifier import RequirementClassifier
@@ -289,6 +319,7 @@ class TestClassifierScenarios:
         result = RequirementClassifier(gw).classify(
             "Improve the system.",
             token=_TEST_TOKEN,
+            run_id=seed_run,
         )
         print(f"\n[ambiguous] scenario={result.scenario_type} confidence={result.confidence:.2f}")
         print(f"  clarification: {result.clarification_needed}")
@@ -303,7 +334,7 @@ class TestClassifierScenarios:
 class TestClarificationLoop:
     """Verify the two-LLM-call clarification loop resolves an ambiguous requirement."""
 
-    def test_resolves_ambiguous_to_scoped_requirement(self, session, db_cleanup):
+    def test_resolves_ambiguous_to_scoped_requirement(self, session, seed_run):
         """ClarificationLoop should produce a resolved_requirement with assumptions."""
         from orchestrator.gateway.gateway import AIGateway
         from orchestrator.planner.clarification import ClarificationLoop
@@ -317,6 +348,7 @@ class TestClarificationLoop:
         result = loop.run(
             requirement="Make the URLs faster.",
             token=_TEST_TOKEN,
+            run_id=seed_run,
         )
 
         print(f"\n[clarification] resolved={result.resolved_requirement[:120]}")
