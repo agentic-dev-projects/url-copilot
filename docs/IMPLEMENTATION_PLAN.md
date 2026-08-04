@@ -90,7 +90,6 @@ orchestrator/prompts/evaluator/         ← empty directory, files added in Phas
 
    The `upgrade()` function must create these tables in dependency order:
    ```
-   orch_users      (standalone)
    orch_runs       (standalone)
    orch_stage_results  (FK → orch_runs)
    orch_audit_events   (FK → orch_runs)
@@ -99,6 +98,10 @@ orchestrator/prompts/evaluator/         ← empty directory, files added in Phas
    orch_cache      (standalone)
    ```
 
+   Note: no `orch_users` table. User identity is resolved from `config/users.yaml`
+   by `TokenAuthenticator` at auth time and passed as a `CurrentUser` dataclass.
+   Keeping users only in YAML avoids a dual source of truth problem.
+
    The `downgrade()` function drops in reverse order.
 
 3. Apply migration:
@@ -106,16 +109,7 @@ orchestrator/prompts/evaluator/         ← empty directory, files added in Phas
    alembic upgrade head
    ```
 
-4. Seed `orch_users` table with the 4 demo users from `config/users.yaml`:
-   ```sql
-   INSERT INTO orch_users VALUES
-     ('alice', 'alice@example.com', 'DEVELOPER', true, now()),
-     ('bob', 'bob@example.com', 'TECH_LEAD', true, now()),
-     ('carol', 'carol@example.com', 'RELEASE_MANAGER', true, now()),
-     ('dave', 'dave@example.com', 'ADMIN', true, now());
-   ```
-
-**Verify**: `alembic current` shows two migrations applied. All 7 `orch_` tables exist in PostgreSQL.
+**Verify**: `alembic current` shows two migrations applied. All 6 `orch_` tables exist in PostgreSQL.
 
 ---
 

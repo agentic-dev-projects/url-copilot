@@ -369,6 +369,11 @@ checkpoint.request_approval(run_id, gate_name, required_permission, triggered_by
 
 Uses the same `service.db.session.SessionLocal` as the service layer. No second DB connection.
 
+**Tables managed by RunStateStore**:
+`orch_runs`, `orch_stage_results`, `orch_audit_events`, `orch_metrics`, `orch_memory`, `orch_cache`
+
+**User identity** is NOT stored in a DB table — it is resolved from `config/users.yaml` by `TokenAuthenticator` and passed around as a `CurrentUser` dataclass.
+
 ### 5.7 Metrics Tracker (`orchestrator/metrics/`)
 
 | File | Responsibility |
@@ -457,13 +462,18 @@ Layer 4 includes both prior stage artifacts AND any `HybridFeedback` from `RunCo
 All orchestrator tables are prefixed `orch_` and co-located in the same PostgreSQL instance as the URL shortener service. A new Alembic migration (`orch_tables`) must be created and applied.
 
 ```sql
--- Run this once to understand table relationships:
+-- Table relationships:
 -- orch_runs → orch_stage_results (1:many)
 -- orch_runs → orch_audit_events  (1:many)
--- orch_runs → orch_metrics       (1:many, one per stage)
--- orch_runs → orch_memory        (1:many, created from run)
--- orch_users standalone (RBAC registry)
+-- orch_runs → orch_metrics       (1:many, one per LLM/tool call)
+-- orch_runs → orch_memory        (1:many, nullable — seeds have no run)
 -- orch_cache standalone (response cache)
+
+-- Note: no orch_users table.
+-- User identity is resolved at auth time by TokenAuthenticator reading
+-- config/users.yaml directly.  Every component that needs user info
+-- receives a CurrentUser dataclass — never queries a DB table.
+-- actor in orch_audit_events stores github_login as a plain string.
 
 CREATE TABLE orch_runs (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -536,14 +546,6 @@ CREATE TABLE orch_memory (
     content        TEXT NOT NULL,
     is_active      BOOLEAN NOT NULL DEFAULT TRUE,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE orch_users (
-    github_login  VARCHAR(100) PRIMARY KEY,
-    email         VARCHAR(255) NOT NULL,
-    role          VARCHAR(30) NOT NULL,  -- DEVELOPER|TECH_LEAD|RELEASE_MANAGER|ADMIN
-    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE orch_cache (

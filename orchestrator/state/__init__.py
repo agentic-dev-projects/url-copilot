@@ -17,8 +17,11 @@ orch_stage_results  One row per stage execution attempt (artifact, model, versio
 orch_audit_events   Append-only event log (see orchestrator.governance)
 orch_metrics        One row per LLM/tool call (tokens, cost, latency, cache_hit)
 orch_memory         Cross-run memory entries (facts, preferences, decisions)
-orch_users          RBAC user registry (seeded from config/users.yaml)
 orch_cache          Response cache (prompt_hash → cached LLM response)
+
+Note: no orch_users table. User identity is resolved at auth time from
+config/users.yaml by TokenAuthenticator and passed as a CurrentUser dataclass.
+This avoids a dual source of truth problem between the YAML file and a DB table.
 
 Why raw SQL / SQLAlchemy Core instead of new ORM models?
 ---------------------------------------------------------
