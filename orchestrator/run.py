@@ -159,12 +159,10 @@ def handle_run(requirement: str, token: str) -> None:
         print("  Run: pip install 'psycopg[binary]' 'langgraph[postgres]'")
         sys.exit(1)
 
-    from orchestrator.agents.stage_agent import StageAgent
     from orchestrator.cache.response_cache import ResponseCache
     from orchestrator.core.engine import OrchestrationEngine
     from orchestrator.gateway.auth import TokenAuthenticator
     from orchestrator.gateway.gateway import AIGateway
-    from orchestrator.governance.audit import AuditLogger
     from orchestrator.memory.store import MemoryStore
     from orchestrator.planner.clarification import ClarificationLoop
     from orchestrator.planner.classifier import RequirementClassifier
@@ -172,7 +170,6 @@ def handle_run(requirement: str, token: str) -> None:
     from orchestrator.scenarios.ambiguous import AmbiguousScenario
     from orchestrator.scenarios.brownfield import BrownfieldScenario
     from orchestrator.scenarios.greenfield import GreenFieldScenario
-    from orchestrator.scenarios.nodes import make_gate_node, make_stage_node
     from orchestrator.state.store import RunStateStore
     from orchestrator.tools.registry import ToolRegistry
     from service.db.session import SessionLocal
@@ -180,9 +177,7 @@ def handle_run(requirement: str, token: str) -> None:
     session = SessionLocal()
     try:
         run_store    = RunStateStore(session)
-        audit        = AuditLogger(session)
         memory_store = MemoryStore(session)
-        cache        = ResponseCache(session)
         registry     = ToolRegistry()
         gateway      = AIGateway()
         auth         = TokenAuthenticator()
@@ -217,8 +212,7 @@ def handle_run(requirement: str, token: str) -> None:
             for a in state["assumptions"]:
                 print(f"  • {a}")
 
-        agent = StageAgent(gateway, registry, cache)
-        nodes = _build_nodes(agent, memory_store, run_store, audit)
+        nodes = _build_nodes(gateway, registry, SessionLocal)
 
         scenario_cls = {
             "greenfield": GreenFieldScenario,
@@ -357,18 +351,15 @@ def handle_approve(run_id: str, token: str) -> None:
         sys.exit(1)
 
     from orchestrator.agents.stage_agent import StageAgent
-    from orchestrator.cache.response_cache import ResponseCache
     from orchestrator.core.engine import OrchestrationEngine
     from orchestrator.gateway.auth import TokenAuthenticator
     from orchestrator.gateway.gateway import AIGateway
     from orchestrator.governance.audit import AuditLogger
     from orchestrator.governance.checkpoint import RBACCheckpoint
-    from orchestrator.memory.store import MemoryStore
     from orchestrator.metrics.tracker import MetricsTracker
     from orchestrator.scenarios.ambiguous import AmbiguousScenario
     from orchestrator.scenarios.brownfield import BrownfieldScenario
     from orchestrator.scenarios.greenfield import GreenFieldScenario
-    from orchestrator.scenarios.nodes import make_gate_node, make_stage_node
     from orchestrator.state.store import RunStateStore
     from orchestrator.tools.registry import ToolRegistry
     from service.db.session import SessionLocal
@@ -441,12 +432,9 @@ def handle_approve(run_id: str, token: str) -> None:
         human_input = {"approved": True, "approver": approver_login, "comment": comment}
 
         # ── Resume the graph ──────────────────────────────────────────────────
-        memory_store = MemoryStore(session)
-        cache        = ResponseCache(session)
         registry     = ToolRegistry()
         gateway      = AIGateway()
-        agent        = StageAgent(gateway, registry, cache)
-        nodes        = _build_nodes(agent, memory_store, run_store, audit)
+        nodes        = _build_nodes(gateway, registry, SessionLocal)
 
         scenario_type = run_row.get("scenario_type", "greenfield")
         scenario_cls = {
@@ -586,8 +574,13 @@ def handle_status(run_id: str, token: str) -> None:
 # ── Gate loop ─────────────────────────────────────────────────────────────────
 
 
-def _build_nodes(agent: Any, memory_store: Any, run_store: Any, audit: Any) -> dict[str, Any]:
-    """Build the node functions dict for all stage and gate nodes."""
+def _build_nodes(gateway: Any, registry: Any, session_factory: Any) -> dict[str, Any]:
+    """Build the node functions dict for all stage and gate nodes.
+
+    Each node closes over gateway, registry, and session_factory.
+    At invocation time each node creates its own session so concurrent
+    fan-out nodes don't share a SQLAlchemy session across threads.
+    """
     from orchestrator.scenarios.greenfield import GreenFieldScenario
     from orchestrator.scenarios.nodes import make_gate_node, make_stage_node
 
@@ -597,13 +590,12 @@ def _build_nodes(agent: Any, memory_store: Any, run_store: Any, audit: Any) -> d
 
     nodes: dict[str, Any] = {}
     for name in stage_names:
-        nodes[name] = make_stage_node(name, agent, memory_store, run_store, audit)
+        nodes[name] = make_stage_node(name, gateway, registry, session_factory)
     for name in gate_names:
         nodes[name] = make_gate_node(
             gate_name=name,
             required_permission=_GATE_PERMISSIONS[name],
-            audit=audit,
-            hybrid_gate=None,
+            session_factory=session_factory,
         )
     return nodes
 

@@ -258,12 +258,14 @@ def _prompt_cache_key(messages: list[dict]) -> str:
 
 
 def _parse_artifact(stage_name: str, raw: str) -> dict:
-    """Strip markdown fences and parse JSON artifact from LLM response.
+    """Strip markdown fences and JS comments, then parse JSON artifact from LLM response.
 
     Raises:
-        ValueError: if the response is not valid JSON after fence stripping.
+        ValueError: if the response is not valid JSON after cleaning.
     """
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
+    # Strip JS-style // comments that LLMs sometimes add (e.g. "file.py" // reason)
+    cleaned = re.sub(r"\s*//[^\n\"]*$", "", cleaned, flags=re.MULTILINE)
     try:
         result = json.loads(cleaned)
     except json.JSONDecodeError as exc:

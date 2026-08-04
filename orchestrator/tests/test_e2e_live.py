@@ -225,19 +225,18 @@ def _build_gateway_and_planner(gateway=None):
 
 
 def _build_engine(gateway, session, run_store):
-    """Wire all 14 nodes and return (engine, memory_store)."""
+    """Wire all 14 nodes and return (nodes, memory_store, scenario classes)."""
     from langgraph.checkpoint.memory import MemorySaver
 
-    from orchestrator.agents.stage_agent import StageAgent
-    from orchestrator.cache.response_cache import ResponseCache
     from orchestrator.core.engine import OrchestrationEngine
-    from orchestrator.governance.audit import AuditLogger
+    from orchestrator.gateway.gateway import AIGateway
     from orchestrator.memory.store import MemoryStore
     from orchestrator.scenarios.ambiguous import AmbiguousScenario
     from orchestrator.scenarios.brownfield import BrownfieldScenario
     from orchestrator.scenarios.greenfield import GreenFieldScenario
     from orchestrator.scenarios.nodes import make_gate_node, make_stage_node
     from orchestrator.tools.registry import ToolRegistry
+    from service.db.session import SessionLocal
 
     _GATE_PERMISSIONS = {
         "architecture_gate": "approve_architecture",
@@ -250,10 +249,7 @@ def _build_engine(gateway, session, run_store):
     memory_store = MemoryStore(session)
     memory_store.seed_if_empty()
 
-    cache    = ResponseCache(session)
     registry = ToolRegistry()
-    audit    = AuditLogger(session)
-    agent    = StageAgent(gateway, registry, cache)
 
     all_names   = GreenFieldScenario.node_names()
     gate_names  = {n for n in all_names if n.endswith("_gate")}
@@ -261,9 +257,9 @@ def _build_engine(gateway, session, run_store):
 
     nodes: dict[str, Any] = {}
     for name in stage_names:
-        nodes[name] = make_stage_node(name, agent, memory_store, run_store, audit)
+        nodes[name] = make_stage_node(name, gateway, registry, SessionLocal)
     for name in gate_names:
-        nodes[name] = make_gate_node(name, _GATE_PERMISSIONS[name], audit, hybrid_gate=None)
+        nodes[name] = make_gate_node(name, _GATE_PERMISSIONS[name], SessionLocal)
 
     return nodes, memory_store, GreenFieldScenario, BrownfieldScenario, AmbiguousScenario
 

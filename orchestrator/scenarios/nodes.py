@@ -42,49 +42,61 @@ from orchestrator.governance.audit import AuditLogger, EventType
 
 def make_stage_node(
     stage_name: str,
-    stage_agent: Any,        # StageAgent — Any avoids circular import
-    memory_store: Any,       # MemoryStore
-    run_store: Any,          # RunStateStore
-    audit: Any,              # AuditLogger | None
+    gateway: Any,            # AIGateway
+    registry: Any,           # ToolRegistry
+    session_factory: Any,    # Callable[[], Session] — called fresh per invocation
 ) -> Callable[[OrchestratorState], dict]:
     """Factory: returns a LangGraph node function for stage_name.
 
-    The returned function:
-      1. Logs STAGE_STARTED to audit
-      2. Runs StageAgent.run() — multi-turn LLM + tool loop
-      3. Persists StageResult to orch_stage_results via RunStateStore
-      4. Logs STAGE_COMPLETED or STAGE_FAILED to audit
-      5. Returns dict with updated stage_artifacts
+    Each invocation creates its own SQLAlchemy session so concurrent fan-out
+    nodes (e.g. implementation_plan + test_plan) don't share a session across
+    threads — SQLAlchemy sessions are not thread-safe.
 
-    Args:
-        stage_name:   e.g. "architecture_design"
-        stage_agent:  Configured StageAgent instance
-        memory_store: MemoryStore for Layer 3 prompts
-        run_store:    RunStateStore for persisting StageResult
-        audit:        AuditLogger (or None — safe to omit in tests)
+    The returned function:
+      1. Creates a fresh session + StageAgent + MemoryStore + RunStateStore
+      2. Logs STAGE_STARTED to audit
+      3. Runs StageAgent.run() — multi-turn LLM + tool loop
+      4. Persists StageResult to orch_stage_results via RunStateStore
+      5. Logs STAGE_COMPLETED or STAGE_FAILED to audit
+      6. Returns dict with updated stage_artifacts
     """
     def node(state: OrchestratorState) -> dict:
-        run_id = state["run_id"]
+        # Import here to avoid circular imports at module load time
+        from orchestrator.agents.stage_agent import StageAgent
+        from orchestrator.cache.response_cache import ResponseCache
+        from orchestrator.governance.audit import AuditLogger
+        from orchestrator.memory.store import MemoryStore
+        from orchestrator.state.store import RunStateStore
 
-        _audit(audit, run_id, EventType.STAGE_STARTED, details={"stage": stage_name})
+        session = session_factory()
+        try:
+            cache        = ResponseCache(session)
+            memory_store = MemoryStore(session)
+            run_store    = RunStateStore(session)
+            audit        = AuditLogger(session)
+            agent        = StageAgent(gateway, registry, cache)
 
-        result: StageResult = stage_agent.run(stage_name, state, memory_store)
-        run_store.save_stage_result(result, run_id)
+            run_id = state["run_id"]
+            _audit(audit, run_id, EventType.STAGE_STARTED, details={"stage": stage_name})
 
-        if result.status == StageStatus.FAILED:
-            _audit(audit, run_id, EventType.STAGE_FAILED,
-                   stage_name=stage_name, details={"error": result.error_message})
-            # Surface the error as a state flag so the engine can handle it
+            result: StageResult = agent.run(stage_name, state, memory_store)
+            run_store.save_stage_result(result, run_id)
+
+            if result.status == StageStatus.FAILED:
+                _audit(audit, run_id, EventType.STAGE_FAILED,
+                       stage_name=stage_name, details={"error": result.error_message})
+                return {"stage_artifacts": {
+                    **state.get("stage_artifacts", {}),
+                    stage_name: {"error": result.error_message, "status": "failed"},
+                }}
+
+            _audit(audit, run_id, EventType.STAGE_COMPLETED, stage_name=stage_name)
             return {"stage_artifacts": {
                 **state.get("stage_artifacts", {}),
-                stage_name: {"error": result.error_message, "status": "failed"},
+                stage_name: result.output_artifact,
             }}
-
-        _audit(audit, run_id, EventType.STAGE_COMPLETED, stage_name=stage_name)
-        return {"stage_artifacts": {
-            **state.get("stage_artifacts", {}),
-            stage_name: result.output_artifact,
-        }}
+        finally:
+            session.close()
 
     node.__name__ = f"{stage_name}_node"
     return node
@@ -93,28 +105,29 @@ def make_stage_node(
 def make_gate_node(
     gate_name: str,
     required_permission: str,
-    audit: Any,              # AuditLogger | None
-    hybrid_gate: Any,        # HybridGate | None — None skips AI evaluation
+    session_factory: Any,    # Callable[[], Session]
+    hybrid_gate: Any = None, # HybridGate | None — None skips AI evaluation
 ) -> Callable[[OrchestratorState], dict]:
     """Factory: returns a LangGraph gate node that interrupt()s for human approval.
 
     interrupt() serialises the pending payload to the checkpointer and raises
     a LangGraph GraphInterrupt exception.  LangGraph catches it, saves the
     graph state, and returns control to the caller.  The CLI resume command
-    calls graph.invoke(approval_input, config) to continue from this point.
-
-    Args:
-        gate_name:           e.g. "architecture_gate"
-        required_permission: Permission the approver must hold, e.g. "approve_architecture"
-        audit:               AuditLogger or None
-        hybrid_gate:         HybridGate for AI evaluation before human prompt (or None)
+    calls graph.invoke(Command(resume=human_input), config) to continue.
     """
     def node(state: OrchestratorState) -> dict:
-        run_id = state["run_id"]
-        _audit(audit, run_id, EventType.CHECKPOINT_REACHED,
-               details={"gate": gate_name, "required_permission": required_permission})
+        from orchestrator.governance.audit import AuditLogger
 
-        # Pause execution — CLI receives this payload via the GraphInterrupt
+        session = session_factory()
+        try:
+            audit  = AuditLogger(session)
+            run_id = state["run_id"]
+            _audit(audit, run_id, EventType.CHECKPOINT_REACHED,
+                   details={"gate": gate_name, "required_permission": required_permission})
+        finally:
+            session.close()
+
+        # Pause — CLI receives this payload via GraphInterrupt
         approval = interrupt({
             "gate_name": gate_name,
             "run_id": run_id,
@@ -122,14 +135,18 @@ def make_gate_node(
             "stage_artifacts": state.get("stage_artifacts", {}),
         })
 
-        # When graph.invoke(approval_input, config) is called, execution resumes here.
-        # approval contains whatever the CLI passed as human_input.
+        # Resumed here after CLI calls graph.invoke(Command(resume=human_input), config)
         approved = approval.get("approved", False) if isinstance(approval, dict) else False
         approver = approval.get("approver", "unknown") if isinstance(approval, dict) else "unknown"
 
-        _audit(audit, run_id,
-               EventType.CHECKPOINT_APPROVED if approved else EventType.CHECKPOINT_REJECTED,
-               details={"gate": gate_name, "approved": approved, "approver": approver})
+        session2 = session_factory()
+        try:
+            audit2 = AuditLogger(session2)
+            _audit(audit2, run_id,
+                   EventType.CHECKPOINT_APPROVED if approved else EventType.CHECKPOINT_REJECTED,
+                   details={"gate": gate_name, "approved": approved, "approver": approver})
+        finally:
+            session2.close()
 
         return {"stage_artifacts": {
             **state.get("stage_artifacts", {}),
