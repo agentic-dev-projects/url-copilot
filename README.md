@@ -30,22 +30,22 @@ An AI-powered URL shortener service with an agentic SDLC orchestration system.
 ## System Architecture
 
 ```mermaid
-graph TB
-    subgraph CLI["CLI (orchestrator.run)"]
-        RUN[run command] --> PLAN["Planner<br/>Classifier + Clarification"]
+flowchart TB
+    subgraph CLI[CLI - orchestrator.run]
+        RUN[run command] --> PLAN[Planner - Classifier + Clarification]
         APR[approve command] --> GW
     end
 
-    PLAN --> GW["AI Gateway<br/>Auth · Rate Limit · Cost Tracking"]
-    GW --> LG["LangGraph Engine<br/>9-stage DAG"]
-    LG --> AGENTS["Stage Agents<br/>LLM calls via OpenAI"]
-    AGENTS --> TOOLS["Tools<br/>read_file · write_file<br/>run_tests · create_pr"]
-    TOOLS --> FS[("Local service/")]
-    TOOLS --> GH["GitHub<br/>Feature Branch + PR"]
-    LG --> GATES["Human Gates<br/>4 approval checkpoints"]
+    PLAN --> GW[AI Gateway - Auth, Rate Limit, Cost Tracking]
+    GW --> LG[LangGraph Engine - 9-stage DAG]
+    LG --> AGENTS[Stage Agents - LLM calls via OpenAI]
+    AGENTS --> TOOLS[Tools - read_file, write_file, run_tests, create_pr]
+    TOOLS --> FS[(local service)]
+    TOOLS --> GH[GitHub - Feature Branch + PR]
+    LG --> GATES[Human Gates - 4 approval checkpoints]
     GATES --> LG
 
-    subgraph DB["PostgreSQL"]
+    subgraph DB[PostgreSQL]
         OR[(orch_runs)]
         OM[(orch_metrics)]
         OSR[(orch_stage_results)]
@@ -54,8 +54,8 @@ graph TB
     GW --> DB
     LG --> DB
 
-    subgraph SVC["URL Shortener Service (FastAPI)"]
-        API[REST API] --> SVC_DB[("PostgreSQL<br/>urls · users · clicks")]
+    subgraph SVC[URL Shortener Service - FastAPI]
+        API[REST API] --> SVC_DB[(PostgreSQL - urls, users, clicks)]
     end
 ```
 
@@ -68,23 +68,23 @@ flowchart TD
     SUBMIT([DEVELOPER submits requirement]) --> CLASSIFY{Classifier}
     CLASSIFY -->|greenfield| RA
     CLASSIFY -->|brownfield| RA
-    CLASSIFY -->|ambiguous| CL["Clarification Loop<br/>up to 4 Q&A rounds"]
+    CLASSIFY -->|ambiguous| CL[Clarification Loop - up to 4 Q&A rounds]
     CL --> RA
 
     RA[requirements_analysis] --> AD[architecture_design]
-    AD --> G1{"architecture_gate<br/>TECH_LEAD"}
+    AD --> G1{architecture_gate - TECH_LEAD}
     G1 --> IP[implementation_plan]
     G1 --> TP[test_plan]
-    IP --> IMPL["implementation<br/>branch · code · PR"]
+    IP --> IMPL[implementation - branch, code, PR]
     TP --> IMPL
     IMPL --> UT[unit_tests]
     IMPL --> IT[integration_tests]
     UT --> DOC[documentation]
     IT --> DOC
-    DOC --> G2{"tests_gate<br/>TECH_LEAD"}
-    G2 --> G3{"pr_gate<br/>RELEASE_MANAGER"}
+    DOC --> G2{tests_gate - TECH_LEAD}
+    G2 --> G3{pr_gate - RELEASE_MANAGER}
     G3 --> RR[release_readiness]
-    RR --> G4{"release_gate<br/>RELEASE_MANAGER"}
+    RR --> G4{release_gate - RELEASE_MANAGER}
     G4 --> DONE([COMPLETED])
 ```
 

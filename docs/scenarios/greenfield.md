@@ -14,19 +14,19 @@ See **[Quick Start](../QUICK_START.md)** for prerequisites, role tokens, and all
 flowchart TD
     SUBMIT([DEVELOPER submits requirement]) --> RA[requirements_analysis]
     RA --> AD[architecture_design]
-    AD --> G1{"architecture_gate<br/>TECH_LEAD"}
+    AD --> G1{architecture_gate - TECH_LEAD}
     G1 --> IP[implementation_plan]
     G1 --> TP[test_plan]
-    IP --> IMPL["implementation<br/>branch · code · PR"]
+    IP --> IMPL[implementation - branch, code, PR]
     TP --> IMPL
     IMPL --> UT[unit_tests]
     IMPL --> IT[integration_tests]
     UT --> DOC[documentation]
     IT --> DOC
-    DOC --> G2{"tests_gate<br/>TECH_LEAD"}
-    G2 --> G3{"pr_gate<br/>RELEASE_MANAGER"}
+    DOC --> G2{tests_gate - TECH_LEAD}
+    G2 --> G3{pr_gate - RELEASE_MANAGER}
     G3 --> RR[release_readiness]
-    RR --> G4{"release_gate<br/>RELEASE_MANAGER"}
+    RR --> G4{release_gate - RELEASE_MANAGER}
     G4 --> DONE([COMPLETED])
 ```
 

@@ -7,22 +7,22 @@ This document is the design reference for the orchestration system. The service 
 ## System Architecture
 
 ```mermaid
-graph TB
-    subgraph CLI["CLI (orchestrator.run)"]
-        RUN[run command] --> PLAN["Planner<br/>Classifier + Clarification"]
+flowchart TB
+    subgraph CLI[CLI - orchestrator.run]
+        RUN[run command] --> PLAN[Planner - Classifier + Clarification]
         APR[approve command] --> GW
     end
 
-    PLAN --> GW["AI Gateway<br/>Auth · Rate Limit · Cost Tracking"]
-    GW --> LG["LangGraph Engine<br/>9-stage DAG"]
-    LG --> AGENTS["Stage Agents<br/>LLM calls via OpenAI"]
-    AGENTS --> TOOLS["Tools<br/>read_file · write_file<br/>run_tests · create_pr"]
-    TOOLS --> FS[("Local service/")]
-    TOOLS --> GH["GitHub<br/>Feature Branch + PR"]
-    LG --> GATES["Human Gates<br/>4 approval checkpoints"]
+    PLAN --> GW[AI Gateway - Auth, Rate Limit, Cost Tracking]
+    GW --> LG[LangGraph Engine - 9-stage DAG]
+    LG --> AGENTS[Stage Agents - LLM calls via OpenAI]
+    AGENTS --> TOOLS[Tools - read_file, write_file, run_tests, create_pr]
+    TOOLS --> FS[(local service)]
+    TOOLS --> GH[GitHub - Feature Branch + PR]
+    LG --> GATES[Human Gates - 4 approval checkpoints]
     GATES --> LG
 
-    subgraph DB["PostgreSQL"]
+    subgraph DB[PostgreSQL]
         OR[(orch_runs)]
         OM[(orch_metrics)]
         OSR[(orch_stage_results)]
@@ -31,8 +31,8 @@ graph TB
     GW --> DB
     LG --> DB
 
-    subgraph SVC["URL Shortener Service (FastAPI)"]
-        API[REST API] --> SVC_DB[("PostgreSQL<br/>urls · users · clicks")]
+    subgraph SVC[URL Shortener Service - FastAPI]
+        API[REST API] --> SVC_DB[(PostgreSQL - urls, users, clicks)]
     end
 ```
 
