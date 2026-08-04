@@ -36,6 +36,8 @@ resume() — continues a previously interrupted graph; passes human_input
 
 from typing import Any
 
+from langgraph.types import Command
+
 from orchestrator.core.state import OrchestratorState
 from orchestrator.scenarios.base import BaseScenario
 
@@ -93,7 +95,7 @@ class OrchestrationEngine:
         """
         graph = self._get_graph()
         config = {"configurable": {"thread_id": run_id}}
-        return graph.invoke(human_input, config)
+        return graph.invoke(Command(resume=human_input), config)
 
     def get_state(self, run_id: str) -> Any:
         """Return the current LangGraph checkpoint state for a run.
