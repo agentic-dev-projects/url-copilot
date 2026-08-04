@@ -97,6 +97,24 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
     Without this step, the feature branch on GitHub has no commits and
     create_pr will fail with "no commits between main and <branch>".
 
+    Implementation note
+    -------------------
+    We do NOT switch the local git branch.  The LLM writes files to the
+    working tree regardless of which branch HEAD points at.  Switching to
+    the feature branch before staging would fail if the working tree has
+    modifications to tracked files that differ between the current branch
+    and the feature branch (git refuses checkout to avoid clobbering them).
+
+    Instead we:
+      1. Stage the changes on the current branch.
+      2. Commit them (temporarily on whatever local branch HEAD is).
+      3. Push just that commit to the REMOTE feature branch via
+         git push origin HEAD:refs/heads/<branch_name>.
+      4. Undo the local commit (reset --mixed) so HEAD goes back to where
+         it was and the LLM-written files are removed from the index.
+      5. Restore tracked files and remove new untracked files under service/
+         so the local working tree is clean for the next run.
+
     Args:
         branch_name:    The feature branch to push to (must already exist —
                         call create_branch first).
@@ -106,7 +124,7 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
         A summary string: "Committed and pushed to <branch_name>: <short_sha>"
 
     Raises:
-        RuntimeError: if git add, commit, or push fails.
+        RuntimeError: if any git step fails.
     """
     repo_root = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -123,18 +141,39 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
             )
         return result.stdout.strip()
 
-    # Checkout the feature branch (it was created on GitHub; create it locally
-    # if it doesn't exist, tracking origin)
-    try:
-        _run(["git", "checkout", branch_name])
-    except RuntimeError:
-        _run(["git", "checkout", "-b", branch_name, f"origin/{branch_name}"])
-
+    # Stage everything the LLM wrote under service/
     _run(["git", "add", "service/"])
+
+    # Verify there is actually something staged
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=repo_root, capture_output=True, text=True,
+    ).stdout.strip()
+    if not staged:
+        raise RuntimeError(
+            "Nothing staged — write_file produced no changes under service/. "
+            "Ensure write_file was called before commit_and_push."
+        )
+
+    # Commit to local HEAD (whatever branch we're on)
     _run(["git", "commit", "-m", commit_message])
-    _run(["git", "push", "origin", branch_name])
+
+    # Push that commit to the REMOTE feature branch (not to local HEAD's upstream)
+    _run(["git", "push", "origin", f"HEAD:refs/heads/{branch_name}"])
 
     short_sha = _run(["git", "rev-parse", "--short", "HEAD"])
+
+    # Clean up: undo the local commit so the next run starts from a clean state.
+    # --mixed keeps files in the working tree but unstages them.
+    _run(["git", "reset", "--mixed", "HEAD~1"])
+    # Restore tracked files under service/ to HEAD state (discard LLM's edits locally)
+    _run(["git", "checkout", "HEAD", "--", "service/"])
+    # Remove any new untracked files the LLM created under service/
+    subprocess.run(
+        ["git", "clean", "-fd", "service/"],
+        cwd=repo_root, capture_output=True,
+    )
+
     return f"Committed and pushed to {branch_name}: {short_sha}"
 
 
