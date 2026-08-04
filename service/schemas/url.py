@@ -7,11 +7,17 @@ Defines request bodies and response shapes for:
 - GET    /api/v1/urls/{id}    (detail)
 - PUT    /api/v1/urls/{id}    (update)
 - DELETE /api/v1/urls/{id}    (delete — no body)
+- GET    /api/v1/urls/{id}/qr (QR code)
 """
 
 from datetime import datetime
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
+
+
+class QRResponseSchema(BaseModel):
+    """Response schema for the QR code endpoint."""
+    qr_code_url: str = Field(..., description="URL or base64 data URI of the generated QR code image")
 
 
 class ShortenRequest(BaseModel):

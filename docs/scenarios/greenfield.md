@@ -65,7 +65,7 @@ and the DOCUMENTATION artifact.
 ```bash
 python -m orchestrator.run approve \
   --run-id <RUN_ID> \
-  --token carol_vp_token \
+  --token carol_rm_token \
   --gate pr_gate
 ```
 Pipeline resumes: `release_readiness`, then pauses.
@@ -81,7 +81,7 @@ python -m orchestrator.run review --token carol_vp_token
 ```bash
 python -m orchestrator.run approve \
   --run-id <RUN_ID> \
-  --token carol_vp_token \
+  --token carol_rm_token \
   --gate release_gate
 ```
 Pipeline completes.
@@ -107,7 +107,7 @@ python -m orchestrator.run status --run-id <RUN_ID>
 |---|---|---|
 | `alice_dev_token` | alice | DEVELOPER — can submit runs |
 | `bob_tl_token` | bob | TECH_LEAD — approves architecture + tests gates |
-| `carol_vp_token` | carol | VP_ENGINEERING — approves pr + release gates |
+| `carol_rm_token` | carol | RELEASE_MANAGER — approves pr + release gates |
 
 ---
 

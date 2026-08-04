@@ -39,7 +39,7 @@ def test_get_short_url_by_id_not_found(mock_db_session):
     assert result is None
 
 
-@patch('service.services.url_service._uuid.UUID')
+@patch('uuid.UUID')
 def test_get_short_url_by_id_invalid_uuid(mock_uuid, mock_db_session):
     mock_user = User(id=1)
     mock_uuid.side_effect = ValueError
