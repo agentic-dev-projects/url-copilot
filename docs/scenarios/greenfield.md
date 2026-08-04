@@ -1,516 +1,404 @@
 # Scenario 1 — Greenfield
 
-## How to Run
-
-### Prerequisites
-- PostgreSQL running locally (`postgresql://postgres:password@localhost:5432/urlcopilot`)
-- Redis running locally (`redis://localhost:6379/0`)
-- `.env` file in project root with `OPENAI_API_KEY` and `GITHUB_TOKEN` set
-- Python env activated with all deps: `pip install -r requirements.txt`
-
-### Step-by-step
-
-**1 — Alice submits the requirement (DEVELOPER)**
-```bash
-python -m orchestrator.run run \
-  --token alice_dev_token \
-  --requirement "Add a bulk URL creation endpoint that accepts a list of long URLs and returns their short codes in a single request"
-```
-Note the `run-id` printed (e.g. `orch-xxxxxxxx`). The pipeline will run
-`requirements_analysis → architecture_design` then pause.
+A greenfield run takes a natural-language feature request, plans it, implements it on a
+feature branch, runs tests, writes documentation, and opens a GitHub PR — with human
+approval gates at four checkpoints.
 
 ---
 
-**2 — Bob reviews the architecture gate (TECH_LEAD)**
-```bash
-python -m orchestrator.run review --token bob_tl_token
-```
+## Prerequisites
 
-**3 — Bob approves**
-```bash
-python -m orchestrator.run approve \
-  --run-id <RUN_ID> \
-  --token bob_tl_token \
-  --gate architecture_gate
-```
-Pipeline resumes: `implementation_plan + test_plan` (parallel) → `implementation`
-→ `unit_tests + integration_tests` (parallel) → `documentation`, then pauses.
+Before running this scenario make sure the following are running and configured:
 
----
-
-**4 — Bob reviews the tests gate**
-```bash
-python -m orchestrator.run review --token bob_tl_token
-```
-
-**5 — Bob approves**
-```bash
-python -m orchestrator.run approve \
-  --run-id <RUN_ID> \
-  --token bob_tl_token \
-  --gate tests_gate
-```
-Pipeline resumes: `documentation` completes, then pauses at `pr_gate`.
-
----
-
-**6 — Carol reviews the PR gate (VP_ENGINEERING)**
-```bash
-python -m orchestrator.run review --token carol_vp_token
-```
-The review shows the IMPLEMENTATION artifact (files written, branch, PR URL)
-and the DOCUMENTATION artifact.
-
-**7 — Carol approves**
-```bash
-python -m orchestrator.run approve \
-  --run-id <RUN_ID> \
-  --token carol_rm_token \
-  --gate pr_gate
-```
-Pipeline resumes: `release_readiness`, then pauses.
-
----
-
-**8 — Carol reviews the release gate**
-```bash
-python -m orchestrator.run review --token carol_vp_token
-```
-
-**9 — Carol approves**
-```bash
-python -m orchestrator.run approve \
-  --run-id <RUN_ID> \
-  --token carol_rm_token \
-  --gate release_gate
-```
-Pipeline completes.
-
----
-
-**10 — Check the final summary**
-```bash
-python -m orchestrator.run status --run-id <RUN_ID>
-```
-
-### What to look for in the summary
-| Field | Expected |
+| Requirement | Details |
 |---|---|
-| `Cache hits` | `> 0%` on a re-run of the same requirement |
-| `pr_url` in implementation artifact | Real GitHub URL (e.g. `https://github.com/agentic-dev-projects/url-copilot/pull/N`) |
-| `pr_gate` review | Shows IMPLEMENTATION + DOCUMENTATION (not release readiness) |
-| Release readiness | `no_debug_code: true`, all blockers resolved |
-| Stages done | 9/9 completed, 0 failed |
+| PostgreSQL | `postgresql://postgres:password@localhost:5432/urlcopilot` |
+| Redis | `redis://localhost:6379/0` |
+| `.env` file | `OPENAI_API_KEY`, `GITHUB_TOKEN`, `GITHUB_REPO` set |
+| Python env | `source .venv/bin/activate` |
+| Dependencies | `pip install -r requirements.txt` |
 
-### Test tokens reference
-| Token | User | Role |
-|---|---|---|
-| `alice_dev_token` | alice | DEVELOPER — can submit runs |
-| `bob_tl_token` | bob | TECH_LEAD — approves architecture + tests gates |
-| `carol_rm_token` | carol | RELEASE_MANAGER — approves pr + release gates |
+Start backing services with Docker Compose if needed:
+```bash
+docker-compose up -d db cache
+```
 
 ---
 
-## Scenario Reference
-## "Add QR code endpoint GET /api/v1/urls/{id}/qr"
+## Users and Tokens
 
-**Scenario type**: Greenfield — new feature, no existing code modified (only new files + router registration).
+| Token | User | Role | What they can do |
+|---|---|---|---|
+| `alice_dev_token` | alice | DEVELOPER | Submit runs |
+| `bob_tl_token` | bob | TECH_LEAD | Approve architecture gate |
+| `carol_rm_token` | carol | RELEASE_MANAGER | Approve tests, PR, and release gates |
 
-**What this scenario demonstrates**:
-- Agent follows existing codebase conventions before generating code
-- Full DAG traversal with all 9 stages
-- Format decision (SVG vs PNG) made by agent, not by human
-- Human approval gates correctly positioned (before code, at code review, at release)
-- Memory captures reviewer preferences for future runs
+> The four-eyes rule is enforced: alice cannot approve her own run.
 
 ---
 
-## CLI Command
+## Pipeline Overview
+
+```
+Alice submits requirement
+        │
+        ▼
+requirements_analysis ──► architecture_design
+                                    │
+                          ⏸ GATE 1: architecture_gate  ← Bob approves
+                                    │
+               ┌────────────────────┴──────────────────┐
+     implementation_plan                           test_plan
+               └────────────────────┬──────────────────┘
+                                    │
+                             implementation
+                      (creates branch, writes code,
+                       runs tests, commits, opens PR)
+                                    │
+               ┌────────────────────┴──────────────────┐
+            unit_tests                       integration_tests
+               └────────────────────┬──────────────────┘
+                                    │
+                             documentation
+                                    │
+                          ⏸ GATE 2: tests_gate  ← Carol approves
+                                    │
+                          ⏸ GATE 3: pr_gate     ← Carol approves
+                                    │
+                          release_readiness
+                                    │
+                          ⏸ GATE 4: release_gate ← Carol approves
+                                    │
+                               COMPLETED
+```
+
+Total: **9 stages**, **4 gates**, run in a single terminal session across multiple `approve` commands.
+
+---
+
+## Step-by-Step
+
+### Step 1 — Alice submits the requirement
 
 ```bash
-python -m orchestrator.run \
-  "Add QR code endpoint GET /api/v1/urls/{id}/qr" \
-  --token alice_dev_token
+python -m orchestrator.run run "Add QR code endpoint GET /api/v1/urls/{id}/qr" --token alice_dev_token
 ```
 
-**Gateway pre-flight**:
+**What it does:**
+- Authenticates alice as DEVELOPER
+- Classifies the requirement as `greenfield`
+- Creates a run record in the database and assigns a run ID
+- Runs `requirements_analysis` then `architecture_design` automatically
+- Pauses at `architecture_gate` waiting for a TECH_LEAD to approve
+
+**Expected output:**
 ```
-Auth:         alice_dev_token → alice (DEVELOPER) ✓
-Permission:   trigger_run → ALLOWED ✓
-Token budget: 0 / 50,000 used today ✓
-Rate limit:   0 calls this minute ✓
-Injection:    none detected ✓
-Input guard:  no PII, no banned ops ✓
-trace_id:     tr-001-abc
+Run ID:   orch-<8-char-hex>
+Scenario: greenfield
+
+Starting pipeline for run orch-<id>...
+
+Pipeline paused at next gate: architecture_gate
+  Required permission: approve_architecture
+
+To continue:
+  python -m orchestrator.run approve --run-id orch-<id> --token <approver_token>
 ```
 
-**Planner**:
-```
-Classifies:  GREENFIELD (new endpoint, no existing code to modify)
-Creates run: orch-green-001
-Selects DAG: GreenFieldScenario
-```
+> **Save the Run ID** — you will pass it to every subsequent `approve` command.
 
 ---
 
-## DAG Execution Trace
+### Step 2 — Bob reviews and approves the architecture gate
 
-```
-REQUIREMENTS_ANALYSIS         [COMPLETED]
-        │
-ARCHITECTURE_DESIGN           [COMPLETED → 🔐 Gate #1]
-        │
-        ├─────────────────────────────────────┐
-IMPLEMENTATION_PLAN [COMPLETED]    TEST_PLAN [COMPLETED]   (parallel)
-        └──────────────────┬──────────────────┘
-                           │ sync point
-                    IMPLEMENTATION           [COMPLETED → Gate #2 SKIPPED]
-                           │
-              ┌────────────┴───────────────┐
-         UNIT_TESTS [COMPLETED]   INTEGRATION_TESTS [COMPLETED]  (parallel)
-              └────────────┬───────────────┘
-                           │ sync point
-                    DOCUMENTATION            [COMPLETED]
-                           │
-                     🔐 GitHub PR → TECH_LEAD merges
-                           │
-                   RELEASE_READINESS         [COMPLETED → 🔐 Gate #4]
-                           │
-                      User Feedback
+```bash
+python -m orchestrator.run approve --run-id orch-<id> --token bob_tl_token
 ```
 
----
+**What it does:**
+- Authenticates bob as TECH_LEAD
+- Displays the `requirements_analysis` and `architecture_design` artifacts from the run
+- Prompts bob for an optional comment and a yes/no approval decision
+- If approved: resumes the pipeline
 
-## Stage 1 — REQUIREMENTS_ANALYSIS
-
-**Model**: gpt-4o-mini (classification task)
-**Tools called**: none
-
-Agent receives the requirement and checks for ambiguity.
-
-**Output artifact**:
-```json
-{
-  "feature": "QR code generation for a short URL",
-  "type": "greenfield",
-  "inputs": ["short_url_id (UUID, path parameter)"],
-  "output": "QR code image (format TBD — deferred to architecture stage)",
-  "auth_required": true,
-  "auth_type": "owner-only",
-  "db_change": false,
-  "breaking_changes": false,
-  "dependency": "QR generation library (TBD)",
-  "ambiguities": ["image format: PNG vs SVG"],
-  "resolution": "image format decision delegated to architecture stage"
-}
+**Expected output:**
 ```
+Authenticated as: bob
+Run ID     : orch-<id>
+Gate       : architecture_gate
+Submitted by: alice
 
-**Exit gate**: ✅ PASSED — ambiguity identified but resolvable in architecture stage without human input.
+Requirement: Add QR code endpoint GET /api/v1/urls/{id}/qr
 
----
+============================================================
 
-## Stage 2 — ARCHITECTURE_DESIGN
+  ────────────────────────────────────────────────────────
+  REQUIREMENTS ANALYSIS
+  ────────────────────────────────────────────────────────
 
-**Model**: gpt-4o (reasoning task)
-**Tools called**:
-```
-read_file("service/api/v1/endpoints/urls.py")       ← understand existing pattern
-read_file("service/api/v1/router.py")               ← how routers are registered
-read_file("service/schemas/url.py")                 ← schema conventions
-search_codebase("StreamingResponse")                ← how binary responses work
-```
+  IN SCOPE:
+    • Implementing a new endpoint GET /api/v1/urls/{id}/qr
+    • Generating QR codes for URLs given their ID
+    ...
 
-**Output artifact**:
-```json
-{
-  "new_files": [
-    "service/api/v1/endpoints/qr.py",
-    "service/schemas/qr.py"
-  ],
-  "modified_files": [
-    "service/api/v1/router.py",
-    "requirements.txt"
-  ],
-  "endpoint": "GET /api/v1/urls/{id}/qr",
-  "auth": "X-API-Key required, owner check enforced",
-  "response_type": "image/svg+xml via StreamingResponse",
-  "format_rationale": "SVG chosen over PNG: scalable, no PIL/Pillow dependency, smaller file size",
-  "library": "segno==1.6.1",
-  "errors": {"401": "missing key", "403": "not owner", "404": "url not found"},
-  "schema_migration": false
-}
-```
+  ────────────────────────────────────────────────────────
+  ARCHITECTURE DESIGN
+  ────────────────────────────────────────────────────────
 
-### 🔐 Gate #1 — Architecture Approval
+  NEW ENDPOINTS:
+    path: /api/v1/urls/{id}/qr
+    method: GET
+    auth_required: True
+    response_schema: QRResponseSchema
+  ...
+============================================================
 
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[orch-green-001] Architecture approval required
-Required role: TECH_LEAD
-Triggered by:  alice (cannot approve their own run)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Notify a TECH_LEAD to run:
-
-  python -m orchestrator.run approve \
-    --run-id orch-green-001 \
-    --gate architecture \
-    --token bob_tl_token
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-**Bob's approval session**:
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Architecture Review — orch-green-001
-Approving as: bob (TECH_LEAD)
-Four-eyes:    alice ≠ bob ✓
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Proposed design:
-  New:      service/api/v1/endpoints/qr.py
-            service/schemas/qr.py
-  Modified: service/api/v1/router.py
-            requirements.txt
-  Format:   SVG via StreamingResponse
-  Auth:     owner-only
-  DB:       no changes
-
+Review comment (optional, press Enter to skip): lgtm
 Approve? [y/n]: y
-Comment: Good choice on SVG. Use segno library, not qrcode.
 
-✓ Approved by bob (TECH_LEAD)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Memory saved:
-  [preference] prefer segno over qrcode for QR generation (bob, 2026-08-03)
+Approved by bob. Resuming pipeline...
 ```
 
-**Audit log entry**:
-```json
-{"run_id": "orch-green-001", "event_type": "CHECKPOINT_APPROVED",
- "stage_name": "ARCHITECTURE_DESIGN", "actor": "bob", "actor_role": "TECH_LEAD",
- "details": {"gate": "architecture", "comment": "Good choice on SVG. Use segno library, not qrcode."}}
+**What runs after approval:**
+- `implementation_plan` and `test_plan` run in parallel
+- `implementation` runs — creates a feature branch, writes code, runs tests, commits and pushes to the branch, opens a GitHub PR
+- `unit_tests` and `integration_tests` run in parallel
+- `documentation` runs
+- Pipeline pauses at `tests_gate`
+
 ```
+Pipeline paused at next gate: tests_gate
+  Required permission: approve_architecture
 
----
-
-## Stages 3a + 3b — IMPLEMENTATION_PLAN + TEST_PLAN (Parallel)
-
-Both run concurrently after Gate #1 approval. No human input required.
-
-**Model**: gpt-4o-mini for both
-
-### Implementation Plan artifact:
-```json
-{
-  "tasks": [
-    {
-      "id": 1,
-      "file": "service/api/v1/endpoints/qr.py",
-      "action": "create",
-      "description": "New endpoint: auth check (owner), generate SVG with segno, return StreamingResponse"
-    },
-    {
-      "id": 2,
-      "file": "service/api/v1/router.py",
-      "action": "modify",
-      "description": "Import and register qr_router with prefix /urls"
-    },
-    {
-      "id": 3,
-      "file": "requirements.txt",
-      "action": "modify",
-      "description": "Add segno==1.6.1"
-    }
-  ]
-}
-```
-
-### Test Plan artifact:
-```json
-{
-  "unit_tests": [
-    "test_qr_svg_generated: valid short_url_id returns non-empty SVG string",
-    "test_qr_invalid_id: unknown id raises 404",
-    "test_qr_wrong_owner: non-owner raises 403"
-  ],
-  "integration_tests": [
-    "test_qr_happy_path: register → shorten → GET /qr → 200 + image/svg+xml",
-    "test_qr_no_auth: GET /qr without API key → 401",
-    "test_qr_not_found: GET /qr for unknown id → 404",
-    "test_qr_not_owner: GET /qr for another user's URL → 403",
-    "test_qr_content_type: response header is image/svg+xml"
-  ],
-  "regression": "all 45 existing tests must still pass"
-}
+To continue:
+  python -m orchestrator.run approve --run-id orch-<id> --token <approver_token>
 ```
 
 ---
 
-## Stage 4 — IMPLEMENTATION
+### Step 3 — Carol approves the tests gate
 
-**Model**: gpt-4o
-**Branch created**: `orch/feature/qr-code-orch-green-001`
-
-**Tool calls**:
-```
-create_branch("orch/feature/qr-code-orch-green-001")     → branch created
-read_file("service/api/v1/endpoints/urls.py")             → reads auth pattern
-read_file("service/api/v1/router.py")                     → reads registration pattern
-write_file("service/api/v1/endpoints/qr.py")              → new endpoint written
-write_file("service/api/v1/router.py")                    → router updated
-write_file("requirements.txt")                             → segno added
-run_linter()                                               → PASSED
+```bash
+python -m orchestrator.run approve --run-id orch-<id> --token carol_rm_token
 ```
 
-**Exit gate checks**:
+**What it does:**
+- Authenticates carol as RELEASE_MANAGER
+- Displays the `unit_tests` and `integration_tests` artifacts — test counts, pass/fail results, gaps identified, and any new test files written
+- Prompts for approval
+
+**Expected output:**
 ```
-Guardrail scan:
-  ✓ No hardcoded secrets
-  ✓ No dangerous system calls
-  ✓ No writes outside service/
-Schema change: NOT DETECTED → Gate #2 SKIPPED
-Linter: PASSED
+Authenticated as: carol
+Gate       : tests_gate
+
+  ────────────────────────────────────────────────────────
+  UNIT TESTS
+  ────────────────────────────────────────────────────────
+
+  TEST RESULTS:
+    failed: 0
+    passed: 46
+    success: True
+
+  TEST FILES WRITTEN:
+    • service/tests/unit/test_qrcode_generation.py
+
+  ────────────────────────────────────────────────────────
+  INTEGRATION TESTS
+  ────────────────────────────────────────────────────────
+
+  TEST RESULTS:
+    failed: 0
+    passed: 3
+    success: True
+
+  TEST FILES WRITTEN:
+    • service/tests/integration/test_qr_code.py
+============================================================
+
+Review comment (optional, press Enter to skip): lgtm
+Approve? [y/n]: y
+
+Approved by carol. Resuming pipeline...
+
+Pipeline paused at next gate: pr_gate
+```
+
+> No stages run between `tests_gate` and `pr_gate` — the pipeline immediately pauses again.
+
+---
+
+### Step 4 — Carol approves the PR gate
+
+```bash
+python -m orchestrator.run approve --run-id orch-<id> --token carol_rm_token
+```
+
+**What it does:**
+- Displays the `implementation` and `documentation` artifacts — the PR URL, branch name, files written, test results from the implementation stage, and documentation changes
+- This is the code review checkpoint: carol verifies the PR was created and the implementation looks correct before proceeding to release readiness
+
+**Expected output:**
+```
+Authenticated as: carol
+Gate       : pr_gate
+
+  ────────────────────────────────────────────────────────
+  IMPLEMENTATION
+  ────────────────────────────────────────────────────────
+
+  PR URL:
+  https://github.com/agentic-dev-projects/url-copilot/pull/<N>
+
+  PR NUMBER:
+  <N>
+
+  BRANCH NAME:
+  feature/add-qr-endpoint-<run-id>
+
+  TEST RESULTS:
+    failed: 0
+    passed: 44
+    success: True
+
+  FILES WRITTEN:
+    • service/api/v1/endpoints/urls.py
+
+  ────────────────────────────────────────────────────────
+  DOCUMENTATION
+  ────────────────────────────────────────────────────────
+
+  FILES UPDATED:
+    • service/api/v1/endpoints/urls.py
+
+  ROUTES DOCUMENTED:
+    • GET /api/v1/urls/{url_id}/qr
+============================================================
+
+Review comment (optional, press Enter to skip): lgtm
+Approve? [y/n]: y
+
+Approved by carol. Resuming pipeline...
+```
+
+**What runs after approval:**
+- `release_readiness` runs — checks tests, auth enforcement, no debug code, documentation, architecture alignment
+- Pipeline pauses at `release_gate`
+
+---
+
+### Step 5 — Carol approves the release gate
+
+```bash
+python -m orchestrator.run approve --run-id orch-<id> --token carol_rm_token
+```
+
+**What it does:**
+- Displays the `release_readiness` artifact — a checklist of every quality gate (tests, auth, secrets, soft-delete, dependencies, error handling)
+- Final human sign-off before the run is marked complete
+
+**Expected output:**
+```
+Authenticated as: carol
+Gate       : release_gate
+
+  ────────────────────────────────────────────────────────
+  RELEASE READINESS
+  ────────────────────────────────────────────────────────
+
+  BLOCKERS: (none)
+
+  CHECKLIST:
+    tests_pass: True
+    auth_enforced: True
+    no_debug_code: True
+    endpoints_documented: True
+    matches_architecture: True
+    migration_reversible: N/A
+    no_hardcoded_secrets: True
+    soft_delete_followed: True
+    dependencies_declared: True
+    error_handling_present: True
+
+  READY TO SHIP: Yes
+============================================================
+
+Review comment (optional, press Enter to skip): lgtm
+Approve? [y/n]: y
+
+Approved by carol. Resuming pipeline...
+
+============================================================
+  RUN SUMMARY — orch-<id>
+============================================================
+  Requirement : Add QR code endpoint GET /api/v1/urls/{id}/qr
+  Scenario    : greenfield
+  Cost (USD)  : ~$0.32
+  Tokens      : ~117,000
+  Stages done : 9
+  Stages fail : 0
+  Retries     : 0
+============================================================
+
+How satisfied are you with this run's output?
+  1 = Unusable   2 = Needs work   3 = Good   4 = Excellent
+Score [1-4] (or press Enter to skip):
 ```
 
 ---
 
-## Stages 5a + 5b — UNIT_TESTS + INTEGRATION_TESTS (Parallel)
+### Step 6 — (Optional) Check status at any point
 
-**Model**: gpt-4o for both
-**Tools called**:
-```
-write_file("service/tests/unit/test_qr.py")
-write_file("service/tests/integration/test_qr_endpoint.py")
-run_tests("service/tests/")
+```bash
+python -m orchestrator.run status --run-id orch-<id> --token alice_dev_token
 ```
 
-**Results**:
-```
-Unit (new):          3/3  PASSED
-Integration (new):   5/5  PASSED
-Existing suite:     45/45 PASSED
-Total:              53/53 PASSED
-```
-
-**Exit gate**: ✅ All tests pass including full regression.
+**What it does:** Shows the current state of a run — which gate it is waiting at, or that it has completed.
 
 ---
 
-## Stage 6 — DOCUMENTATION
+### Step 7 — (Optional) Review without approving
 
-**Model**: gpt-4o-mini
-**Tools called**:
-```
-read_file("docs/design.md")
-write_file("docs/design.md")    ← add QR endpoint to section 4 (API Contracts)
-read_file("README.md")
-write_file("README.md")         ← add curl example for GET /qr
+```bash
+python -m orchestrator.run review --token bob_tl_token
 ```
 
-All changes committed to `orch/feature/qr-code-orch-green-001`.
+**What it does:** Lists all runs currently awaiting approval that are visible to this token's role. Does not prompt for approval — use `approve` when ready to act.
 
 ---
 
-## GitHub PR Created
+## What to Verify After the Run
 
-```
-PR #5
-Title:  feat: add QR code endpoint GET /api/v1/urls/{id}/qr
-Branch: orch/feature/qr-code-orch-green-001 → main
-
-Body:
-  ## Summary
-  - Adds GET /api/v1/urls/{id}/qr returning SVG QR code
-  - Uses segno library (lightweight, no PIL dependency)
-  - Owner-only access enforced
-  - 8 new tests (53 total, all passing)
-
-  ## Changes
-  - NEW service/api/v1/endpoints/qr.py
-  - MOD service/api/v1/router.py (register qr_router)
-  - MOD requirements.txt (add segno==1.6.1)
-  - MOD docs/design.md (API contract added)
-  - MOD README.md (curl example added)
-
-  ## Orchestration Run
-  - Run ID: orch-green-001
-  - Triggered by: alice (DEVELOPER)
-  - Architecture approved by: bob (TECH_LEAD) at 2026-08-03T10:30:00Z
-  - Prompt version: architecture_v1
-  - Model: gpt-4o
-
-Required reviewer: bob (TECH_LEAD)
-```
-
-**Bob reviews diff on GitHub → Approves → Merges.**
-
-Orchestrator detects merge (polls every 30s) → records `PR_MERGED` in audit log.
+| Check | Where to look |
+|---|---|
+| Feature branch created | GitHub → branches list → `feature/add-qr-endpoint-<id>` |
+| PR opened with implementation | GitHub → Pull Requests → PR title contains the requirement |
+| Implementation file committed to branch | PR diff → `service/api/v1/endpoints/urls.py` |
+| 44+ tests passed during implementation | PR gate review → `TEST RESULTS: passed: 44` |
+| Run summary | Terminal output after release_gate approval |
+| All 9 stages completed | `Stages done: 9`, `Stages fail: 0` |
 
 ---
 
-## Stage 7 — RELEASE_READINESS
+## Troubleshooting
 
-**Model**: gpt-4o-mini
+**`ERROR: DATABASE_URL is not set`**
+— PostgreSQL is not running or `.env` is missing. Run `docker-compose up -d db` and check `.env`.
 
-**Release checklist artifact**:
-```
-✓ Tests:       53/53 passing
-✓ Linter:      clean
-✓ Docs:        API contract + README updated
-✓ Migration:   none required
-✓ PR merged:   by bob (TECH_LEAD)
-✓ Dependency:  segno==1.6.1, no known CVEs
-```
+**`Daily token budget exceeded for 'alice'`**
+— Alice's daily token budget (DEVELOPER role) is exhausted. Budget resets at midnight UTC.
+Increase the limit in `orchestrator/config/rbac.yaml` under `DEVELOPER.daily_token_budget` if needed.
 
-### 🔐 Gate #4 — Release Approval
+**`WRITE_FILE_REQUIRED: Nothing is staged under service/`**
+— The LLM called `commit_and_push` without calling `write_file` first. This can happen if the LLM
+reads the codebase and concludes the feature already exists locally. Ensure `service/` is clean
+(run `git checkout HEAD -- service/` before starting) and retry.
 
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[orch-green-001] Release approval required
-Required role: RELEASE_MANAGER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Carol runs:
-  python -m orchestrator.run approve \
-    --run-id orch-green-001 --gate release \
-    --token carol_rm_token
+**`fatal: pathspec 'service/' did not match any files`**
+— Internal path resolution error. Verify `orchestrator/tools/github_client.py` uses
+`os.path.join(os.path.dirname(__file__), "..", "..")` (two levels up, not three) for `repo_root`.
 
-Release checklist:
-  ✓ Tests passing:  53/53
-  ✓ Lint:           clean
-  ✓ Documentation:  updated
-  ✓ Schema changes: none
-  ✓ PR merged by:   bob (TECH_LEAD)
-  ✓ New dependency: segno 1.6.1 (no CVEs)
-
-Approve release? [y/n]: y
-
-✓ Approved by carol (RELEASE_MANAGER)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
----
-
-## User Feedback
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Run orch-green-001 completed successfully in 9m 14s
-
-Total cost:  $0.047 (53 LLM calls, 42,100 tokens)
-Cache hits:  12 / 53 calls (23%)
-Stages:      9/9 completed, 0 failed, 0 retried
-
-Rate this output [1=Poor 2=Acceptable 3=Good 4=Excellent]: 4
-Comment (Enter to skip): Clean implementation, tests are thorough.
-
-✓ Feedback recorded. Thank you.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
----
-
-## Memory Written This Run
-
-| Type | Actor | Content |
-|---|---|---|
-| preference | bob | prefer segno over qrcode for QR generation |
-| decision | system | QR endpoint format: SVG via StreamingResponse, rationale: scalable, no PIL |
+**PR creation fails with GitHub 422**
+— The feature branch has no commits (commit_and_push failed silently before this). Check the
+`orchestrator_app.log` for the root cause, fix it, and run again.
