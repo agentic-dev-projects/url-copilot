@@ -51,6 +51,7 @@ class StructuredLogger:
     def log_response(
         self,
         trace_id: str,
+        request: GatewayRequest,
         response: GatewayResponse,
         duration_ms: float,
     ) -> None:
@@ -59,6 +60,9 @@ class StructuredLogger:
             level="INFO",
             event="gateway.response",
             trace_id=trace_id,
+            run_id=request.run_id,
+            stage_name=request.stage_name,
+            model=request.model,
             cache_hit=response.cache_hit,
             has_tool_calls=bool(response.tool_calls),
             tokens_in=response.usage.get("input_tokens", 0),

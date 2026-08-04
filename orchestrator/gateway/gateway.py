@@ -189,7 +189,7 @@ class AIGateway:
                 usage=usage,
                 trace_id=trace_id,
             )
-            self._logger.log_response(trace_id, response, duration_ms)
+            self._logger.log_response(trace_id, request, response, duration_ms)
             return response
 
         except Exception:
