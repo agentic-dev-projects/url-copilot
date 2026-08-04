@@ -98,7 +98,7 @@ STAGE_CONTEXT_FILES: dict[str, list[str]] = {
     "documentation": [
         "service/api/v1/router.py",
     ],
-    "release_readiness": [],
+    "release_readiness": ["requirements.txt"],
 }
 
 # ── which prior stage artifacts each stage needs (Layer 4) ───────────────────

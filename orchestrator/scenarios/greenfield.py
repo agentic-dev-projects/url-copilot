@@ -101,20 +101,22 @@ class GreenFieldScenario(BaseScenario):
         # Fan-in: implementation waits for both planning stages
         graph.add_edge(["implementation_plan", "test_plan"], "implementation")
 
-        # Conditional: schema gate only when a DB migration is required
+        # Conditional: schema gate only when a DB migration is required.
+        # No-schema path fans out to both test stages immediately.
         graph.add_conditional_edges(
             "implementation",
             lambda state: (
                 "schema_gate"
                 if state.get("schema_change_detected")
-                else "unit_tests"
+                else ["unit_tests", "integration_tests"]
             ),
         )
+        # Schema path: fan-out to both test stages after schema review
         graph.add_edge("schema_gate", "unit_tests")
+        graph.add_edge("schema_gate", "integration_tests")
 
-        # Fan-out: both test types run concurrently
-        graph.add_edge("unit_tests", "tests_gate")
-        graph.add_edge("integration_tests", "tests_gate")
+        # Fan-in: both test types must complete before tests_gate
+        graph.add_edge(["unit_tests", "integration_tests"], "tests_gate")
 
         graph.add_edge("tests_gate", "documentation")
         graph.add_edge("documentation", "pr_gate")

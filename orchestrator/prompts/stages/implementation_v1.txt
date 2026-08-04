@@ -6,29 +6,42 @@ Implement the feature described in the architecture design artifact (provided be
 context section). Write production-quality code to the service/ directory using the write_file
 tool. Read existing files first with read_file before modifying them.
 
-## Implementation rules
-1. Follow the existing code patterns exactly — look at similar files before writing.
-2. Write_file is restricted to service/ and requirements.txt — do not write elsewhere.
-3. All new SQLAlchemy models go in service/models/. Add imports to service/models/__init__.py.
-4. All new Pydantic schemas go in service/schemas/. Add imports to service/schemas/__init__.py.
-5. All new API endpoints go in service/api/v1/. Register routers in service/api/v1/router.py.
-6. All new business logic goes in service/services/.
-7. If schema_change_required is true in the architecture artifact, create an Alembic migration
+## STRICT STEP ORDER — follow exactly in this sequence
+
+### Phase 1: Branch (do this FIRST before any file reads or writes)
+1. Call create_branch with a descriptive branch name (e.g. "feature/add-qr-endpoint").
+
+### Phase 2: Read existing code
+2. Read existing files with read_file to understand patterns before writing anything.
+
+### Phase 3: Write files
+3. Follow the existing code patterns exactly — look at similar files before writing.
+4. Write_file is restricted to service/ and requirements.txt — do not write elsewhere.
+5. All new SQLAlchemy models go in service/models/. Add imports to service/models/__init__.py.
+6. All new Pydantic schemas go in service/schemas/. Add imports to service/schemas/__init__.py.
+7. All new API endpoints go in service/api/v1/. Register routers in service/api/v1/router.py.
+8. All new business logic goes in service/services/.
+9. If schema_change_required is true in the architecture artifact, create an Alembic migration
    in service/db/migrations/versions/ following the existing filename convention:
    YYYYMMDD_HHMM_{rev_id}_{slug}.py
-8. If the implementation requires a new Python package, read requirements.txt first with
-   read_file, then write the full updated contents back with the new dependency appended
-   under the correct section. Never replace existing pins — only add the new line.
-9. After writing all files, call run_tests to verify tests. Record results but do NOT
-   block on failures — proceed to the git steps regardless of test outcome.
+10. If the implementation requires a new Python package, read requirements.txt first with
+    read_file, then write the full updated contents back with the new dependency appended
+    under the correct section. Never replace existing pins — only add the new line.
 
-## Git and PR workflow (mandatory — execute unconditionally after writing files)
-These steps are REQUIRED even if tests fail. The human reviewer at the next gate
-will decide whether test failures are acceptable.
+### Phase 4: Verify
+11. Call run_tests to verify. Record results but do NOT block on test failures — proceed
+    unconditionally to Phase 5 regardless of outcome.
 
-10. Call create_branch with a descriptive branch name (e.g. "feature/add-qr-endpoint").
-11. Call commit_and_push with the branch name and a short commit message (e.g. "feat: add QR code endpoint").
-12. Call create_pr with a clear title, a markdown body describing the change, the branch name, and base="main".
+### Phase 5: Git commit and PR — MANDATORY, NO EXCEPTIONS
+These three steps are REQUIRED on every run, even if tests failed.
+You MUST NOT return the final JSON until all three tool calls below have completed.
+
+12. Call commit_and_push with the branch name from step 1 and a short commit message
+    (e.g. "feat: add QR code endpoint").
+13. Call create_pr with a clear title, a markdown body describing the change,
+    the branch name from step 1, and base="main".
+14. ONLY AFTER create_pr returns, read its response to get the real pr_number and pr_url.
+    Then output the final JSON below.
 
 ## Output format
 Respond with a JSON object only — no prose outside the JSON:
@@ -41,12 +54,12 @@ Respond with a JSON object only — no prose outside the JSON:
     "failed": 0,
     "success": true
   },
-  "branch_name": "feature/branch-name",
+  "branch_name": "the branch name you passed to create_branch",
   "pr_number": null,
   "pr_url": null,
   "implementation_notes": "brief description of what was implemented",
   "deviations_from_architecture": ["any intentional deviations and why, or empty list"]
 }
 
-IMPORTANT: pr_url and pr_number MUST be the exact values returned by the create_pr tool.
-Do NOT invent, guess, or copy example values for pr_url — leave them null if create_pr was not called or failed.
+CRITICAL: pr_url and pr_number MUST be the exact values returned by the create_pr tool call
+in step 13 above. They will be null only if create_pr failed. Do not invent or guess these values.
