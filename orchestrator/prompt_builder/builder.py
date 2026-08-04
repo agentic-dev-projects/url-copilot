@@ -84,6 +84,7 @@ STAGE_CONTEXT_FILES: dict[str, list[str]] = {
         "service/api/v1/router.py",
         "service/models/__init__.py",
         "service/schemas/__init__.py",
+        "service/schemas/url_schema.py",
         "service/services/__init__.py",
         "requirements.txt",
     ],
