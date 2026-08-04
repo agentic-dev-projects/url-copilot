@@ -10,12 +10,12 @@ For approval commands see [Quick Start — CLI Commands](QUICK_START.md#cli-comm
 
 ```mermaid
 flowchart LR
-    AD[architecture_design] --> G1{architecture_gate\nTECH_LEAD}
+    AD[architecture_design] --> G1{"architecture_gate<br/>TECH_LEAD"}
     G1 --> IMPL[implementation ...]
-    DOC[documentation] --> G2{tests_gate\nTECH_LEAD}
-    G2 --> G3{pr_gate\nRELEASE_MANAGER}
+    DOC[documentation] --> G2{"tests_gate<br/>TECH_LEAD"}
+    G2 --> G3{"pr_gate<br/>RELEASE_MANAGER"}
     G3 --> RR[release_readiness]
-    RR --> G4{release_gate\nRELEASE_MANAGER}
+    RR --> G4{"release_gate<br/>RELEASE_MANAGER"}
     G4 --> DONE([COMPLETED])
 ```
 

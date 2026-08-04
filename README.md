@@ -32,17 +32,17 @@ An AI-powered URL shortener service with an agentic SDLC orchestration system.
 ```mermaid
 graph TB
     subgraph CLI["CLI (orchestrator.run)"]
-        RUN[run command] --> PLAN[Planner\nClassifier + Clarification]
+        RUN[run command] --> PLAN["Planner<br/>Classifier + Clarification"]
         APR[approve command] --> GW
     end
 
-    PLAN --> GW[AI Gateway\nAuth · Rate Limit · Cost Tracking]
-    GW --> LG[LangGraph Engine\n9-stage DAG]
-    LG --> AGENTS[Stage Agents\nLLM calls via OpenAI]
-    AGENTS --> TOOLS[Tools\nread_file · write_file\nrun_tests · create_pr]
-    TOOLS --> FS[(Local\nservice/)]
-    TOOLS --> GH[GitHub\nFeature Branch + PR]
-    LG --> GATES[Human Gates\n4 approval checkpoints]
+    PLAN --> GW["AI Gateway<br/>Auth · Rate Limit · Cost Tracking"]
+    GW --> LG["LangGraph Engine<br/>9-stage DAG"]
+    LG --> AGENTS["Stage Agents<br/>LLM calls via OpenAI"]
+    AGENTS --> TOOLS["Tools<br/>read_file · write_file<br/>run_tests · create_pr"]
+    TOOLS --> FS[("Local service/")]
+    TOOLS --> GH["GitHub<br/>Feature Branch + PR"]
+    LG --> GATES["Human Gates<br/>4 approval checkpoints"]
     GATES --> LG
 
     subgraph DB["PostgreSQL"]
@@ -55,7 +55,7 @@ graph TB
     LG --> DB
 
     subgraph SVC["URL Shortener Service (FastAPI)"]
-        API[REST API] --> SVC_DB[(PostgreSQL\nurls · users · clicks)]
+        API[REST API] --> SVC_DB[("PostgreSQL<br/>urls · users · clicks")]
     end
 ```
 
@@ -68,23 +68,23 @@ flowchart TD
     SUBMIT([DEVELOPER submits requirement]) --> CLASSIFY{Classifier}
     CLASSIFY -->|greenfield| RA
     CLASSIFY -->|brownfield| RA
-    CLASSIFY -->|ambiguous| CL[Clarification Loop\nup to 4 Q&A rounds]
+    CLASSIFY -->|ambiguous| CL["Clarification Loop<br/>up to 4 Q&A rounds"]
     CL --> RA
 
     RA[requirements_analysis] --> AD[architecture_design]
-    AD --> G1{⏸ architecture_gate\nTECH_LEAD}
+    AD --> G1{"architecture_gate<br/>TECH_LEAD"}
     G1 --> IP[implementation_plan]
     G1 --> TP[test_plan]
-    IP --> IMPL[implementation\nbranch · code · PR]
+    IP --> IMPL["implementation<br/>branch · code · PR"]
     TP --> IMPL
     IMPL --> UT[unit_tests]
     IMPL --> IT[integration_tests]
     UT --> DOC[documentation]
     IT --> DOC
-    DOC --> G2{⏸ tests_gate\nTECH_LEAD}
-    G2 --> G3{⏸ pr_gate\nRELEASE_MANAGER}
+    DOC --> G2{"tests_gate<br/>TECH_LEAD"}
+    G2 --> G3{"pr_gate<br/>RELEASE_MANAGER"}
     G3 --> RR[release_readiness]
-    RR --> G4{⏸ release_gate\nRELEASE_MANAGER}
+    RR --> G4{"release_gate<br/>RELEASE_MANAGER"}
     G4 --> DONE([COMPLETED])
 ```
 

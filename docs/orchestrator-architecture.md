@@ -9,17 +9,17 @@ This document is the design reference for the orchestration system. The service 
 ```mermaid
 graph TB
     subgraph CLI["CLI (orchestrator.run)"]
-        RUN[run command] --> PLAN[Planner\nClassifier + Clarification]
+        RUN[run command] --> PLAN["Planner<br/>Classifier + Clarification"]
         APR[approve command] --> GW
     end
 
-    PLAN --> GW[AI Gateway\nAuth · Rate Limit · Cost Tracking]
-    GW --> LG[LangGraph Engine\n9-stage DAG]
-    LG --> AGENTS[Stage Agents\nLLM calls via OpenAI]
-    AGENTS --> TOOLS[Tools\nread_file · write_file\nrun_tests · create_pr]
-    TOOLS --> FS[(Local\nservice/)]
-    TOOLS --> GH[GitHub\nFeature Branch + PR]
-    LG --> GATES[Human Gates\n4 approval checkpoints]
+    PLAN --> GW["AI Gateway<br/>Auth · Rate Limit · Cost Tracking"]
+    GW --> LG["LangGraph Engine<br/>9-stage DAG"]
+    LG --> AGENTS["Stage Agents<br/>LLM calls via OpenAI"]
+    AGENTS --> TOOLS["Tools<br/>read_file · write_file<br/>run_tests · create_pr"]
+    TOOLS --> FS[("Local service/")]
+    TOOLS --> GH["GitHub<br/>Feature Branch + PR"]
+    LG --> GATES["Human Gates<br/>4 approval checkpoints"]
     GATES --> LG
 
     subgraph DB["PostgreSQL"]
@@ -32,7 +32,7 @@ graph TB
     LG --> DB
 
     subgraph SVC["URL Shortener Service (FastAPI)"]
-        API[REST API] --> SVC_DB[(PostgreSQL\nurls · users · clicks)]
+        API[REST API] --> SVC_DB[("PostgreSQL<br/>urls · users · clicks")]
     end
 ```
 
