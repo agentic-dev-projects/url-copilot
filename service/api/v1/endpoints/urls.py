@@ -12,6 +12,7 @@ from service.schemas.url import (
     URLListResponse,
     URLResponse,
     UpdateURLRequest,
+    QRResponseSchema,
 )
 from service.services import url_service
 
@@ -93,6 +94,26 @@ def get_url(
     if not short_url:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found")
     return _to_response(short_url, settings.base_url)
+
+
+@router.get(
+    "/{url_id}/qr",
+    response_model=QRResponseSchema,
+    summary="Generate and return a QR code for the original URL associated with the given short URL ID.",
+)
+def get_url_qr(
+    url_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> QRResponseSchema:
+    short_url = url_service.get_short_url_by_id(db, url_id=url_id, owner=current_user)
+    if not short_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found")
+
+    img_byte_arr = url_service.generate_qr_code(short_url.original_url)
+    base64_data_uri = f"data:image/png;base64,{img_byte_arr.getvalue().decode('utf-8')}"
+
+    return QRResponseSchema(qr_code_url=base64_data_uri)
 
 
 @router.put(
