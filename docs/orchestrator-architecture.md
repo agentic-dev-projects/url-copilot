@@ -129,7 +129,7 @@ uvicorn service.main:app --reload
 
 ## 3. Orchestrator Layer — Complete
 
-Everything under `orchestrator/` is implemented. See `docs/IMPLEMENTATION_PLAN.md` for the build log and phase-by-phase notes.
+Everything under `orchestrator/` is implemented. See `docs/_archive/IMPLEMENTATION_PLAN.md` for the build log and phase-by-phase notes.
 
 ```
 orchestrator/
@@ -1449,7 +1449,7 @@ url-copilot/
 ├── docs/
 │   ├── design.md                     ← URL shortener service design (complete)
 │   ├── orchestrator-architecture.md  ← THIS FILE
-│   ├── IMPLEMENTATION_PLAN.md        ← ordered build plan with status
+│   ├── _archive/IMPLEMENTATION_PLAN.md  ← build log (archived)
 │   └── scenarios/
 │       ├── greenfield.md
 │       ├── brownfield.md
