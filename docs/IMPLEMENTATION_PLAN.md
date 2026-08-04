@@ -459,7 +459,7 @@ class GatewayResponse:
 ---
 
 ### Phase 8 — Memory System
-**Status**: ❌ TODO
+**Status**: ✅ COMPLETE
 
 File: **`orchestrator/memory/store.py`** — `MemoryStore`:
 ```python
@@ -1002,7 +1002,7 @@ LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 | 5 | Audit logger (AuditLogger + EventType — append-only orch_audit_events) | ✅ |
 | 6 | Gateway: auth + RBAC checkpoint (TokenAuthenticator, RBACCheckpoint, four-eyes) | ✅ |
 | 7 | Gateway: full pipeline (11-step pipeline, wrap_openai LangSmith tracing) | ✅ |
-| 8 | Memory system | ❌ |
+| 8 | Memory system (MemoryStore — seed/save/invalidate/format_for_prompt) | ✅ |
 | 9 | Cache (response + tool) | ❌ |
 | 10 | Tool registry | ❌ |
 | 11 | Prompt builder | ❌ |
