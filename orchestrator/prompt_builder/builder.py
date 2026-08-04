@@ -57,6 +57,12 @@ from orchestrator.tools import filesystem
 
 STAGE_CONTEXT_FILES: dict[str, list[str]] = {
     "classifier": [],
+    "requirements_analysis": [
+        "service/main.py",
+        "service/api/v1/router.py",
+        "service/models/__init__.py",
+        "service/schemas/__init__.py",
+    ],
     "architecture_design": [
         "service/main.py",
         "service/api/v1/router.py",
@@ -64,15 +70,33 @@ STAGE_CONTEXT_FILES: dict[str, list[str]] = {
         "service/schemas/__init__.py",
         "service/config.py",
     ],
+    "implementation_plan": [
+        "service/api/v1/router.py",
+        "service/models/__init__.py",
+        "service/schemas/__init__.py",
+        "service/services/__init__.py",
+    ],
+    "test_plan": [
+        "service/tests/conftest.py",
+    ],
     "implementation": [
         "service/main.py",
         "service/api/v1/router.py",
         "service/models/__init__.py",
         "service/schemas/__init__.py",
         "service/services/__init__.py",
+        "requirements.txt",
     ],
-    "tests": [
+    "unit_tests": [
         "service/tests/conftest.py",
+        "service/api/v1/router.py",
+    ],
+    "integration_tests": [
+        "service/tests/conftest.py",
+        "service/api/v1/router.py",
+    ],
+    "documentation": [
+        "service/api/v1/router.py",
     ],
     "release_readiness": [],
 }
@@ -80,11 +104,16 @@ STAGE_CONTEXT_FILES: dict[str, list[str]] = {
 # ── which prior stage artifacts each stage needs (Layer 4) ───────────────────
 
 PRIOR_STAGE_DEPENDENCIES: dict[str, list[str]] = {
-    "classifier":          [],
-    "architecture_design": [],
-    "implementation":      ["architecture_design"],
-    "tests":               ["architecture_design", "implementation"],
-    "release_readiness":   ["architecture_design", "implementation", "tests"],
+    "classifier":           [],
+    "requirements_analysis":[],
+    "architecture_design":  ["requirements_analysis"],
+    "implementation_plan":  ["architecture_design"],
+    "test_plan":            ["architecture_design"],
+    "implementation":       ["architecture_design", "implementation_plan"],
+    "unit_tests":           ["architecture_design", "implementation"],
+    "integration_tests":    ["architecture_design", "implementation"],
+    "documentation":        ["implementation"],
+    "release_readiness":    ["architecture_design", "implementation", "unit_tests"],
 }
 
 _SEPARATOR = "\n\n" + "─" * 60 + "\n\n"
@@ -194,17 +223,18 @@ class PromptBuilder:
         return "\n\n".join(lines)
 
     def _build_instruction(self, stage_name: str, state: OrchestratorState) -> str:
-        """Build Layer 7 — the specific instruction for this stage and run."""
+        """Build Layer 7 — the specific instruction for this stage and run.
+
+        run_id and triggered_by are intentionally excluded — they are
+        operational metadata that the LLM never uses, and including them
+        would produce a unique cache key on every run, defeating the cache.
+        """
         requirement = state.get("resolved_requirement") or state.get("requirement", "")
         scenario = state.get("scenario_type", "unknown")
-        run_id = state.get("run_id", "")
-        triggered_by = state.get("triggered_by", "")
 
         lines = [
             f"## Your Task",
             f"",
-            f"**Run ID**: {run_id}",
-            f"**Triggered by**: {triggered_by}",
             f"**Scenario**: {scenario}",
             f"",
             f"**Requirement**:",

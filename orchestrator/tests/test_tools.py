@@ -224,6 +224,37 @@ def test_create_pr_returns_number_and_url():
         assert "42" in url
 
 
+def test_commit_and_push_runs_git_commands():
+    completed = MagicMock()
+    completed.returncode = 0
+    completed.stdout = "abc1234"
+    completed.stderr = ""
+
+    with patch("orchestrator.tools.github_client.subprocess.run", return_value=completed) as mock_run:
+        from orchestrator.tools.github_client import commit_and_push
+        result = commit_and_push("feature/add-qr-endpoint", "feat: add QR code endpoint")
+
+    assert "feature/add-qr-endpoint" in result
+    commands = [call.args[0] for call in mock_run.call_args_list]
+    assert any("checkout" in cmd for cmd in commands)
+    assert any("add" in cmd for cmd in commands)
+    assert any("commit" in cmd for cmd in commands)
+    assert any("push" in cmd for cmd in commands)
+
+
+def test_commit_and_push_raises_on_git_failure():
+    failed = MagicMock()
+    failed.returncode = 1
+    failed.stdout = ""
+    failed.stderr = "fatal: not a git repository"
+
+    with patch("orchestrator.tools.github_client.subprocess.run", return_value=failed):
+        from orchestrator.tools.github_client import commit_and_push
+        import pytest
+        with pytest.raises(RuntimeError, match="git command failed"):
+            commit_and_push("feature/test-branch", "test commit")
+
+
 def test_poll_pr_status_returns_merged_false_when_open():
     with patch("orchestrator.tools.github_client._repo") as mock_repo:
         repo = MagicMock()
@@ -329,4 +360,16 @@ def test_registry_does_not_cache_create_branch():
     cache = ToolCache()
     with patch("orchestrator.tools.github_client.create_branch", return_value="http://url"):
         registry.execute("create_branch", {"branch_name": "feat/x"}, tool_cache=cache)
+    assert cache.size() == 0
+
+
+def test_registry_does_not_cache_commit_and_push():
+    registry = ToolRegistry()
+    cache = ToolCache()
+    with patch("orchestrator.tools.github_client.commit_and_push", return_value="Committed and pushed"):
+        registry.execute(
+            "commit_and_push",
+            {"branch_name": "feat/x", "commit_message": "feat: test"},
+            tool_cache=cache,
+        )
     assert cache.size() == 0

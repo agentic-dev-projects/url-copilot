@@ -6,6 +6,8 @@ Route handlers delegate all logic here; this module has no FastAPI imports.
 
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+import qrcode
+from io import BytesIO
 
 from sqlalchemy.orm import Session
 
@@ -89,6 +91,15 @@ def delete_short_url(db: Session, short_url: ShortURL) -> None:
     """Soft-delete a short link (preserves analytics history)."""
     short_url.is_active = False
     db.commit()
+
+
+def generate_qr_code(url: str) -> BytesIO:
+    """Generate a QR code image for the given URL."""
+    qr = qrcode.make(url)
+    img_byte_arr = BytesIO()
+    qr.save(img_byte_arr, format='PNG')
+    img_byte_arr.seek(0)
+    return img_byte_arr
 
 
 # ── Read operations ───────────────────────────────────────────────────────────

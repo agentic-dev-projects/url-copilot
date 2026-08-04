@@ -54,7 +54,7 @@ from orchestrator.cache.tool_cache import ToolCache
 from orchestrator.tools import filesystem, github_client, test_runner
 
 # Tools that mutate state — never cache their results
-_NO_CACHE_TOOLS = frozenset({"write_file", "create_branch", "create_pr"})
+_NO_CACHE_TOOLS = frozenset({"write_file", "create_branch", "commit_and_push", "create_pr"})
 
 # ── tool dispatch map ─────────────────────────────────────────────────────────
 
@@ -66,6 +66,7 @@ TOOLS: dict[str, Any] = {
     "run_tests":        test_runner.run_tests,
     "run_linter":       test_runner.run_linter,
     "create_branch":    github_client.create_branch,
+    "commit_and_push":  github_client.commit_and_push,
     "create_pr":        github_client.create_pr,
     "poll_pr_status":   github_client.poll_pr_status,
 }
@@ -98,9 +99,10 @@ TOOL_SCHEMAS: list[dict] = [
         "function": {
             "name": "write_file",
             "description": (
-                "Write content to a file inside the service/ directory. "
+                "Write content to a file inside the service/ directory or to requirements.txt. "
                 "Creates the file (and any missing parent directories) if it does not exist. "
-                "Restricted to service/ — writes outside service/ are blocked."
+                "Use this to add new Python packages to requirements.txt when your implementation "
+                "requires a library not already listed there."
             ),
             "parameters": {
                 "type": "object",
@@ -213,6 +215,32 @@ TOOL_SCHEMAS: list[dict] = [
                     },
                 },
                 "required": ["branch_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "commit_and_push",
+            "description": (
+                "Stage all changes under service/, create a git commit, and push "
+                "to the feature branch. Call this after all write_file calls are "
+                "done and before create_pr. Without this step the branch has no "
+                "commits and create_pr will fail."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "branch_name": {
+                        "type": "string",
+                        "description": "Feature branch to push to (must already exist via create_branch)",
+                    },
+                    "commit_message": {
+                        "type": "string",
+                        "description": "Git commit message (e.g. 'feat: add QR code endpoint')",
+                    },
+                },
+                "required": ["branch_name", "commit_message"],
             },
         },
     },

@@ -15,12 +15,14 @@ PyGithub usage
 All three public functions use PyGithub (github.Github).  The library handles
 rate limiting, retries, and pagination automatically.
 
-create_branch   — GET repo, GET main SHA, create ref "refs/heads/{branch_name}"
-create_pr       — POST /repos/{owner}/{repo}/pulls
-poll_pr_status  — GET /repos/{owner}/{repo}/pulls/{number}
+create_branch     — GET repo, GET main SHA, create ref "refs/heads/{branch_name}"
+commit_and_push   — git add service/ + git commit + git push origin {branch}
+create_pr         — POST /repos/{owner}/{repo}/pulls
+poll_pr_status    — GET /repos/{owner}/{repo}/pulls/{number}
 """
 
 import os
+import subprocess
 
 from github import Auth, Github, GithubException
 
@@ -78,6 +80,54 @@ def create_branch(branch_name: str, from_branch: str = _DEFAULT_BASE_BRANCH) -> 
         sha=source.commit.sha,
     )
     return f"https://github.com/{repo.full_name}/tree/{branch_name}"
+
+
+def commit_and_push(branch_name: str, commit_message: str) -> str:
+    """Stage all changes under service/, commit, and push to branch_name.
+
+    This must be called after write_file tool calls and before create_pr.
+    Without this step, the feature branch on GitHub has no commits and
+    create_pr will fail with "no commits between main and <branch>".
+
+    Args:
+        branch_name:    The feature branch to push to (must already exist —
+                        call create_branch first).
+        commit_message: Git commit message.
+
+    Returns:
+        A summary string: "Committed and pushed to <branch_name>: <short_sha>"
+
+    Raises:
+        RuntimeError: if git add, commit, or push fails.
+    """
+    repo_root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..")
+    )
+
+    def _run(cmd: list[str]) -> str:
+        result = subprocess.run(
+            cmd, cwd=repo_root, capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"git command failed: {' '.join(cmd)}\n"
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+        return result.stdout.strip()
+
+    # Checkout the feature branch (it was created on GitHub; create it locally
+    # if it doesn't exist, tracking origin)
+    try:
+        _run(["git", "checkout", branch_name])
+    except RuntimeError:
+        _run(["git", "checkout", "-b", branch_name, f"origin/{branch_name}"])
+
+    _run(["git", "add", "service/"])
+    _run(["git", "commit", "-m", commit_message])
+    _run(["git", "push", "origin", branch_name])
+
+    short_sha = _run(["git", "rev-parse", "--short", "HEAD"])
+    return f"Committed and pushed to {branch_name}: {short_sha}"
 
 
 def create_pr(

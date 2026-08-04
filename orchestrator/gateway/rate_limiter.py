@@ -1,7 +1,7 @@
 """
 RateLimiter — per-user call rate enforcement using an in-memory sliding window.
 
-Limit: 20 calls per 60-second window per user (github_login).
+Limit: 200 calls per 60-second window per user (github_login).
 
 Why in-memory and not Redis?
 -----------------------------
@@ -30,7 +30,7 @@ from orchestrator.gateway.auth import CurrentUser
 from orchestrator.gateway.models import RateLimitError
 
 _WINDOW_SECONDS = 60
-_MAX_CALLS = 20
+_MAX_CALLS = 200
 
 
 class RateLimiter:
@@ -40,7 +40,7 @@ class RateLimiter:
         self._windows: dict[str, list[float]] = {}   # github_login → [timestamp, ...]
 
     def check(self, user: CurrentUser) -> None:
-        """Assert the user has not exceeded 20 calls in the last 60 seconds.
+        """Assert the user has not exceeded 200 calls in the last 60 seconds.
 
         Appends the current timestamp to the user's window on success.
 

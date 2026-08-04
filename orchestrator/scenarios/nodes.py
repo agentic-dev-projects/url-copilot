@@ -64,6 +64,7 @@ def make_stage_node(
         # Import here to avoid circular imports at module load time
         from orchestrator.agents.stage_agent import StageAgent
         from orchestrator.cache.response_cache import ResponseCache
+        from orchestrator.gateway.cost_tracker import CostTracker
         from orchestrator.governance.audit import AuditLogger
         from orchestrator.memory.store import MemoryStore
         from orchestrator.state.store import RunStateStore
@@ -81,6 +82,21 @@ def make_stage_node(
 
             result: StageResult = agent.run(stage_name, state, memory_store)
             run_store.save_stage_result(result, run_id)
+
+            if result.cache_hit:
+                import uuid
+                CostTracker().record(
+                    session=session,
+                    trace_id=str(uuid.uuid4()),
+                    run_id=run_id,
+                    stage_name=stage_name,
+                    model=result.model_used or "gpt-4o",
+                    prompt_version=result.prompt_version or "",
+                    usage={"input_tokens": 0, "output_tokens": 0},
+                    llm_latency_ms=0.0,
+                    github_login=state.get("triggered_by", "unknown"),
+                    cache_hit=True,
+                )
 
             if result.status == StageStatus.FAILED:
                 _audit(audit, run_id, EventType.STAGE_FAILED,

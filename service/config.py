@@ -7,7 +7,7 @@ Import the module-level `settings` singleton everywhere configuration is needed
 
 Usage:
     from service.config import settings
-    print(settings.base_url)
+    base_url = settings.base_url
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict

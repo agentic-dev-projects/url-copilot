@@ -651,7 +651,11 @@ def _print_gate_context(gate_name: str, artifacts: dict, stage_results: list[dic
         _show_artifact("UNIT TESTS", artifacts.get("unit_tests"))
         _show_artifact("INTEGRATION TESTS", artifacts.get("integration_tests"))
 
-    elif gate_name in ("pr_gate", "release_gate"):
+    elif gate_name == "pr_gate":
+        _show_artifact("IMPLEMENTATION", artifacts.get("implementation"))
+        _show_artifact("DOCUMENTATION", artifacts.get("documentation"))
+
+    elif gate_name == "release_gate":
         _show_artifact("RELEASE READINESS", artifacts.get("release_readiness"))
 
     else:

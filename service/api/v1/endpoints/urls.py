@@ -1,7 +1,8 @@
-"""URL management endpoints — CRUD for short links."""
+"""URL management endpoints — CRUD for short links and QR code generation."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+from fastapi.responses import StreamingResponse
 
 from service.api.deps import check_rate_limit, get_current_user
 from service.config import settings
@@ -12,6 +13,7 @@ from service.schemas.url import (
     URLListResponse,
     URLResponse,
     UpdateURLRequest,
+    QRResponseSchema,
 )
 from service.services import url_service
 
@@ -29,6 +31,22 @@ def _to_response(short_url, base_url: str) -> URLResponse:
         created_at=short_url.created_at,
         is_active=short_url.is_active,
     )
+
+
+@router.get("/{url_id}/qr", response_model=QRResponseSchema, summary="Generate QR code for a short URL")
+def generate_qr_code(
+    url_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    short_url = url_service.get_short_url_by_id(db, url_id=url_id, owner=current_user)
+    if not short_url or not short_url.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found or inactive")
+
+    qr_code_img = url_service.generate_qr_code(short_url.original_url)
+    response = StreamingResponse(content=qr_code_img, media_type="image/png")
+    response.headers["Content-Disposition"] = f"attachment; filename={url_id}.png"
+    return response
 
 
 @router.post(

@@ -121,9 +121,16 @@ class AIGateway:
             # Step 5: Schema + injection validation
             self._input_validator.validate(request.messages)
 
-            # Step 6: Input guardrails (PII)
-            full_prompt = " ".join(m.get("content") or "" for m in request.messages)
-            self._guardrails.check_input(full_prompt)
+            # Step 6: Input guardrails (PII) — scan only user-role messages.
+            # System prompts contain codebase file contents (which legitimately
+            # include email addresses in test fixtures, auth schemas, etc.).
+            # PII risk is only in user-submitted content, not in our own prompts.
+            user_text = " ".join(
+                m.get("content") or ""
+                for m in request.messages
+                if m.get("role") == "user"
+            )
+            self._guardrails.check_input(user_text)
 
             # Step 7: Start timing span
             trace_id = self._tracer.start()
@@ -131,13 +138,33 @@ class AIGateway:
 
             # ── LLM call ──────────────────────────────────────────────────────
 
-            # Step 8: OpenAI API call (auto-traced by LangSmith via wrap_openai)
+            # Step 8: OpenAI API call with TPM rate-limit retry.
+            # OpenAI 429s on tokens-per-minute (TPM) limits are transient —
+            # the window resets every 60 s.  We back off up to 3 times before
+            # propagating so a single large prompt doesn't abort a long pipeline.
             llm_start = time.monotonic()
-            completion = self._openai.chat.completions.create(
-                model=request.model,
-                messages=request.messages,
-                tools=request.tools or openai.NOT_GIVEN,
-            )
+            _max_retries = 3
+            _backoff = 15.0   # seconds; doubles each attempt
+            for _attempt in range(_max_retries + 1):
+                try:
+                    completion = self._openai.chat.completions.create(
+                        model=request.model,
+                        messages=request.messages,
+                        tools=request.tools or openai.NOT_GIVEN,
+                    )
+                    break
+                except openai.RateLimitError as exc:
+                    if _attempt == _max_retries:
+                        raise
+                    wait = _backoff * (2 ** _attempt)
+                    self._logger.log_error(
+                        trace_id or "pre-trace",
+                        "rate_limit_retry",
+                        f"OpenAI TPM rate limit hit (attempt {_attempt + 1}/{_max_retries}). "
+                        f"Waiting {wait:.0f}s before retry.",
+                        stage_name=request.stage_name,
+                    )
+                    time.sleep(wait)
             llm_latency_ms = (time.monotonic() - llm_start) * 1000
 
             message = completion.choices[0].message

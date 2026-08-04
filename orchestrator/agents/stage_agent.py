@@ -83,7 +83,7 @@ class _GatewayCallable(Protocol):
     """
     def call(self, request: GatewayRequest) -> GatewayResponse: ...
 
-MAX_TOOL_ITERATIONS = 10
+MAX_TOOL_ITERATIONS = 20
 
 
 class StageAgent:
@@ -136,6 +136,7 @@ class StageAgent:
         cache_key = _prompt_cache_key(messages)
         cached = self._cache.get(cache_key, self._model)
         if cached is not None:
+            _log_cache_hit(stage_name, state.get("run_id", ""), self._model)
             return StageResult(
                 stage_name=stage_name,
                 status=StageStatus.COMPLETED,
@@ -145,6 +146,7 @@ class StageAgent:
                 output_artifact=cached,
                 prompt_version=prompt_version,
                 model_used=self._model,
+                cache_hit=True,
             )
 
         # ── Steps 3–5: Multi-turn tool-calling loop ───────────────────────────
@@ -204,7 +206,7 @@ class StageAgent:
                             f"Error: tool '{tool_name}' is not available. "
                             f"Available tools: read_file, write_file, list_directory, "
                             f"search_codebase, run_tests, run_linter, create_branch, "
-                            f"create_pr, poll_pr_status."
+                            f"commit_and_push, create_pr, poll_pr_status."
                         )
                     conversation_history.append({
                         "role": "tool",
@@ -255,6 +257,24 @@ class StageAgent:
 def _prompt_cache_key(messages: list[dict]) -> str:
     """Stable string key for the full messages list — used as ResponseCache prompt_text."""
     return json.dumps(messages, sort_keys=True, ensure_ascii=False)
+
+
+def _log_cache_hit(stage_name: str, run_id: str, model: str) -> None:
+    """Emit a structured log line for a stage-level cache hit.
+
+    The gateway is never called on a cache hit (StageAgent returns early),
+    so this is the only place where a cache hit becomes visible in stdout.
+    """
+    import sys
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "level": "INFO",
+        "event": "stage.cache_hit",
+        "stage_name": stage_name,
+        "run_id": run_id,
+        "model": model,
+    }
+    print(json.dumps(record), file=sys.stdout, flush=True)
 
 
 def _parse_artifact(stage_name: str, raw: str) -> dict:

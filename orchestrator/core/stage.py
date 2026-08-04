@@ -109,3 +109,4 @@ class StageResult:
     error_message:    str | None             = None
     prompt_version:   str | None             = None
     model_used:       str | None             = None
+    cache_hit:        bool                   = False

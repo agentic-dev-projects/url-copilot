@@ -18,6 +18,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 SERVICE_DIR = PROJECT_ROOT / "service"
+REQUIREMENTS_TXT = PROJECT_ROOT / "requirements.txt"
+
+# Paths outside service/ that agents are explicitly allowed to write
+_ALLOWED_ROOT_FILES = frozenset({str(REQUIREMENTS_TXT)})
 
 
 class WriteGuardrailError(Exception):
@@ -43,25 +47,29 @@ def read_file(path: str) -> str:
 
 
 def write_file(path: str, content: str) -> bool:
-    """Write content to a file inside service/.
+    """Write content to a file inside service/ or to requirements.txt.
 
     Creates parent directories as needed.
 
     Args:
-        path:    Path relative to the project root — must be under service/.
+        path:    Path relative to the project root — must be under service/
+                 or exactly "requirements.txt".
         content: UTF-8 string to write.
 
     Returns:
         True on success.
 
     Raises:
-        WriteGuardrailError: if the resolved path is outside service/.
+        WriteGuardrailError: if the resolved path is outside the allowed paths.
     """
     resolved = (PROJECT_ROOT / path).resolve()
-    if not str(resolved).startswith(str(SERVICE_DIR)):
+    in_service = str(resolved).startswith(str(SERVICE_DIR))
+    in_allowlist = str(resolved) in _ALLOWED_ROOT_FILES
+    if not in_service and not in_allowlist:
         raise WriteGuardrailError(
             f"write_file: path '{path}' resolves to '{resolved}' which is "
-            f"outside service/ — write not permitted."
+            f"outside service/ — write not permitted. "
+            f"Only service/ files and requirements.txt may be written."
         )
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")

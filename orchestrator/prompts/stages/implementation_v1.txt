@@ -8,7 +8,7 @@ tool. Read existing files first with read_file before modifying them.
 
 ## Implementation rules
 1. Follow the existing code patterns exactly — look at similar files before writing.
-2. Write_file is restricted to service/ — do not attempt to write outside it.
+2. Write_file is restricted to service/ and requirements.txt — do not write elsewhere.
 3. All new SQLAlchemy models go in service/models/. Add imports to service/models/__init__.py.
 4. All new Pydantic schemas go in service/schemas/. Add imports to service/schemas/__init__.py.
 5. All new API endpoints go in service/api/v1/. Register routers in service/api/v1/router.py.
@@ -16,8 +16,19 @@ tool. Read existing files first with read_file before modifying them.
 7. If schema_change_required is true in the architecture artifact, create an Alembic migration
    in service/db/migrations/versions/ following the existing filename convention:
    YYYYMMDD_HHMM_{rev_id}_{slug}.py
-8. After writing all files, call run_tests to verify the existing tests still pass.
-9. Fix any failures before returning.
+8. If the implementation requires a new Python package, read requirements.txt first with
+   read_file, then write the full updated contents back with the new dependency appended
+   under the correct section. Never replace existing pins — only add the new line.
+9. After writing all files, call run_tests to verify tests. Record results but do NOT
+   block on failures — proceed to the git steps regardless of test outcome.
+
+## Git and PR workflow (mandatory — execute unconditionally after writing files)
+These steps are REQUIRED even if tests fail. The human reviewer at the next gate
+will decide whether test failures are acceptable.
+
+10. Call create_branch with a descriptive branch name (e.g. "feature/add-qr-endpoint").
+11. Call commit_and_push with the branch name and a short commit message (e.g. "feat: add QR code endpoint").
+12. Call create_pr with a clear title, a markdown body describing the change, the branch name, and base="main".
 
 ## Output format
 Respond with a JSON object only — no prose outside the JSON:
@@ -30,6 +41,12 @@ Respond with a JSON object only — no prose outside the JSON:
     "failed": 0,
     "success": true
   },
+  "branch_name": "feature/branch-name",
+  "pr_number": null,
+  "pr_url": null,
   "implementation_notes": "brief description of what was implemented",
   "deviations_from_architecture": ["any intentional deviations and why, or empty list"]
 }
+
+IMPORTANT: pr_url and pr_number MUST be the exact values returned by the create_pr tool.
+Do NOT invent, guess, or copy example values for pr_url — leave them null if create_pr was not called or failed.
