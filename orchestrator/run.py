@@ -414,7 +414,7 @@ def handle_approve(run_id: str, token: str) -> None:
         }
 
         print(f"\n{'='*60}")
-        _print_gate_context(gate_name, artifacts)
+        _print_gate_context(gate_name, artifacts, stage_results)
         print(f"{'='*60}")
 
         # ── Collect decision ──────────────────────────────────────────────────
@@ -616,10 +616,22 @@ def _extract_interrupt(snapshot: Any) -> dict | None:
 # ── Display helpers ───────────────────────────────────────────────────────────
 
 
-def _print_gate_context(gate_name: str, artifacts: dict) -> None:
+def _print_gate_context(gate_name: str, artifacts: dict, stage_results: list[dict] | None = None) -> None:
     """Print the artifact content most relevant to the approver for this gate."""
+    # Show any failed stages first so the approver knows what went wrong
+    if stage_results:
+        failed = [r for r in stage_results if r.get("status") == "failed"]
+        if failed:
+            print(f"\n  {'─'*56}")
+            print(f"  STAGE FAILURES (review before approving)")
+            print(f"  {'─'*56}")
+            for r in failed:
+                print(f"\n  Stage  : {r['stage_name']}")
+                print(f"  Error  : {r.get('error_message') or '(no error message recorded)'}")
+
     if not artifacts:
-        print("  (no stage artifacts available)")
+        if not stage_results or not any(r.get("status") == "failed" for r in (stage_results or [])):
+            print("  (no stage artifacts available)")
         return
 
     import json

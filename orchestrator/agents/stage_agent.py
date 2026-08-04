@@ -192,12 +192,20 @@ class StageAgent:
                     except json.JSONDecodeError:
                         args = {}
 
-                    tool_result = self._registry.execute(tool_name, args, tool_cache)
-                    result_content = (
-                        str(tool_result.error)
-                        if tool_result.error
-                        else json.dumps(tool_result.result)
-                    )
+                    try:
+                        tool_result = self._registry.execute(tool_name, args, tool_cache)
+                        result_content = (
+                            str(tool_result.error)
+                            if tool_result.error
+                            else json.dumps(tool_result.result)
+                        )
+                    except KeyError:
+                        result_content = (
+                            f"Error: tool '{tool_name}' is not available. "
+                            f"Available tools: read_file, write_file, list_directory, "
+                            f"search_codebase, run_tests, run_linter, create_branch, "
+                            f"create_pr, poll_pr_status."
+                        )
                     conversation_history.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
