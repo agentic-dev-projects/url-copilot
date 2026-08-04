@@ -192,6 +192,13 @@ def handle_run(requirement: str, token: str) -> None:
         user = auth.resolve(token)
         print(f"\nAuthenticated as: {user.github_login} ({user.role})")
 
+        if len(requirement) < 10:
+            print("ERROR: Requirement is too short (minimum 10 characters).")
+            sys.exit(1)
+        if len(requirement) > 2000:
+            print(f"ERROR: Requirement is too long ({len(requirement)} chars, maximum 2000).")
+            sys.exit(1)
+
         classifier    = RequirementClassifier(gateway)
         clarification = ClarificationLoop(gateway)
         planner       = Planner(classifier, clarification, run_store)

@@ -1,18 +1,14 @@
 """
-InputValidator — schema validation and prompt injection detection.
+InputValidator — prompt injection detection for gateway messages.
 
-Two distinct checks, two distinct exception types:
+Checks all user-role messages for:
+  - Null bytes (\x00) — break some tokenisers, indicate accidental binary data
+  - Prompt injection patterns — attempts to override the system prompt
 
-1. Schema validation (InputValidationError)
-   - Requirement text must be 10–2000 characters
-   - No null bytes (\x00) — null bytes break some tokenisers and indicate
-     binary data accidentally included in a prompt
-
-2. Prompt injection detection (PromptInjectionError)
-   - Patterns that attempt to override the system prompt or jailbreak the model
-   - Case-insensitive substring match — simple and fast
-   - False-positive rate is low because these patterns are rarely in legitimate
-     engineering requirements
+Length validation is NOT done here.  By the time messages reach the gateway
+they include Layer 4 injected artifacts from prior stages, making them much
+larger than the original user requirement.  Raw requirement length is validated
+at the CLI entry point (handle_run in run.py) before planner.plan() is called.
 
 Why substring match instead of regex?
 --------------------------------------
@@ -27,9 +23,6 @@ Append to _INJECTION_PATTERNS.  No other code changes needed.
 
 from orchestrator.gateway.models import InputValidationError, PromptInjectionError
 
-_MIN_LENGTH = 10
-_MAX_LENGTH = 2000
-
 _INJECTION_PATTERNS = [
     "ignore previous instructions",
     "ignore your system prompt",
@@ -43,16 +36,16 @@ _INJECTION_PATTERNS = [
 
 
 class InputValidator:
-    """Validates gateway request messages for schema compliance and injection patterns."""
+    """Validates gateway request messages for injection patterns."""
 
     def validate(self, messages: list[dict]) -> None:
-        """Run schema and injection checks on all user-role messages.
+        """Run injection checks on all user-role messages.
 
         Args:
             messages: OpenAI chat messages list (each dict has 'role' and 'content').
 
         Raises:
-            InputValidationError:  if any message fails schema checks.
+            InputValidationError:  if any message contains null bytes.
             PromptInjectionError:  if any injection pattern is found.
         """
         for msg in messages:
@@ -67,16 +60,6 @@ class InputValidator:
         if "\x00" in text:
             raise InputValidationError(
                 "Prompt contains null bytes — possible binary data in input."
-            )
-        if len(text) < _MIN_LENGTH:
-            raise InputValidationError(
-                f"Requirement is too short ({len(text)} chars). "
-                f"Minimum is {_MIN_LENGTH} characters."
-            )
-        if len(text) > _MAX_LENGTH:
-            raise InputValidationError(
-                f"Requirement is too long ({len(text)} chars). "
-                f"Maximum is {_MAX_LENGTH} characters."
             )
 
     def _check_injection(self, text: str) -> None:

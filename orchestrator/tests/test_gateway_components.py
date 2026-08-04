@@ -43,16 +43,11 @@ def test_input_validator_passes_valid_requirement():
     v.validate([{"role": "user", "content": "Add a QR code endpoint to the URL shortener"}])
 
 
-def test_input_validator_rejects_too_short():
+def test_input_validator_passes_long_artifact_message():
+    # Gateway no longer enforces length — that check lives in the CLI.
+    # Large constructed messages (e.g. with injected stage artifacts) must pass.
     v = InputValidator()
-    with pytest.raises(InputValidationError, match="too short"):
-        v.validate([{"role": "user", "content": "hi"}])
-
-
-def test_input_validator_rejects_too_long():
-    v = InputValidator()
-    with pytest.raises(InputValidationError, match="too long"):
-        v.validate([{"role": "user", "content": "x" * 2001}])
+    v.validate([{"role": "user", "content": "x" * 5000}])
 
 
 def test_input_validator_rejects_null_bytes():
