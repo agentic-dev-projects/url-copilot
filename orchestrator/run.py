@@ -278,6 +278,8 @@ def handle_run(requirement: str, token: str) -> None:
         print(f"  python -m orchestrator.run review --token <approver_token>")
         print(f"\n  # Approver — approve this specific run:")
         print(f"  python -m orchestrator.run approve --run-id {run_id} --token <approver_token>")
+        print(f"\n  # Check current status and per-stage metrics:")
+        print(f"  python -m orchestrator.run status --run-id {run_id} --token <your_token>")
 
     except KeyboardInterrupt:
         print("\nAborted by user.")
