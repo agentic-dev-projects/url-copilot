@@ -1,4 +1,117 @@
 # Scenario 1 — Greenfield
+
+## How to Run
+
+### Prerequisites
+- PostgreSQL running locally (`postgresql://postgres:password@localhost:5432/urlcopilot`)
+- Redis running locally (`redis://localhost:6379/0`)
+- `.env` file in project root with `OPENAI_API_KEY` and `GITHUB_TOKEN` set
+- Python env activated with all deps: `pip install -r requirements.txt`
+
+### Step-by-step
+
+**1 — Alice submits the requirement (DEVELOPER)**
+```bash
+python -m orchestrator.run run \
+  --token alice_dev_token \
+  --requirement "Add a bulk URL creation endpoint that accepts a list of long URLs and returns their short codes in a single request"
+```
+Note the `run-id` printed (e.g. `orch-xxxxxxxx`). The pipeline will run
+`requirements_analysis → architecture_design` then pause.
+
+---
+
+**2 — Bob reviews the architecture gate (TECH_LEAD)**
+```bash
+python -m orchestrator.run review --token bob_tl_token
+```
+
+**3 — Bob approves**
+```bash
+python -m orchestrator.run approve \
+  --run-id <RUN_ID> \
+  --token bob_tl_token \
+  --gate architecture_gate
+```
+Pipeline resumes: `implementation_plan + test_plan` (parallel) → `implementation`
+→ `unit_tests + integration_tests` (parallel) → `documentation`, then pauses.
+
+---
+
+**4 — Bob reviews the tests gate**
+```bash
+python -m orchestrator.run review --token bob_tl_token
+```
+
+**5 — Bob approves**
+```bash
+python -m orchestrator.run approve \
+  --run-id <RUN_ID> \
+  --token bob_tl_token \
+  --gate tests_gate
+```
+Pipeline resumes: `documentation` completes, then pauses at `pr_gate`.
+
+---
+
+**6 — Carol reviews the PR gate (VP_ENGINEERING)**
+```bash
+python -m orchestrator.run review --token carol_vp_token
+```
+The review shows the IMPLEMENTATION artifact (files written, branch, PR URL)
+and the DOCUMENTATION artifact.
+
+**7 — Carol approves**
+```bash
+python -m orchestrator.run approve \
+  --run-id <RUN_ID> \
+  --token carol_vp_token \
+  --gate pr_gate
+```
+Pipeline resumes: `release_readiness`, then pauses.
+
+---
+
+**8 — Carol reviews the release gate**
+```bash
+python -m orchestrator.run review --token carol_vp_token
+```
+
+**9 — Carol approves**
+```bash
+python -m orchestrator.run approve \
+  --run-id <RUN_ID> \
+  --token carol_vp_token \
+  --gate release_gate
+```
+Pipeline completes.
+
+---
+
+**10 — Check the final summary**
+```bash
+python -m orchestrator.run status --run-id <RUN_ID>
+```
+
+### What to look for in the summary
+| Field | Expected |
+|---|---|
+| `Cache hits` | `> 0%` on a re-run of the same requirement |
+| `pr_url` in implementation artifact | Real GitHub URL (e.g. `https://github.com/agentic-dev-projects/url-copilot/pull/N`) |
+| `pr_gate` review | Shows IMPLEMENTATION + DOCUMENTATION (not release readiness) |
+| Release readiness | `no_debug_code: true`, all blockers resolved |
+| Stages done | 9/9 completed, 0 failed |
+
+### Test tokens reference
+| Token | User | Role |
+|---|---|---|
+| `alice_dev_token` | alice | DEVELOPER — can submit runs |
+| `bob_tl_token` | bob | TECH_LEAD — approves architecture + tests gates |
+| `carol_vp_token` | carol | VP_ENGINEERING — approves pr + release gates |
+
+---
+
+## Scenario Reference
 ## "Add QR code endpoint GET /api/v1/urls/{id}/qr"
 
 **Scenario type**: Greenfield — new feature, no existing code modified (only new files + router registration).
