@@ -4,22 +4,36 @@ orchestrator.core — DAG engine, stage models, and shared run state.
 Files
 -----
 stage.py    StageStatus enum, StageNode dataclass, StageResult dataclass.
-            StageNode is the unit of work in the DAG; StageResult is what
-            gets persisted to orch_stage_results after execution.
+            StageNode describes a stage before execution (name, deps, gate,
+            retries).  StageResult is the execution record persisted to
+            orch_stage_results after each attempt.
 
-dag.py      DAGGraph — directed acyclic graph over StageNodes.
-            Tracks dependencies, finds stages that are ready to run
-            (all upstream deps COMPLETED), detects stuck states.
+state.py    OrchestratorState TypedDict — the LangGraph shared state passed
+            between every pipeline node.  Replaces the RunContext dataclass.
+            LangGraph checkpoints this to PostgreSQL via PostgresSaver after
+            every node execution, enabling run resumption after crashes or
+            human gate pauses.
 
-engine.py   OrchestrationEngine — the main execution loop.
-            Runs parallel-ready stages concurrently, waits at sync points,
-            triggers human gates, handles retries (max 3 attempts per stage).
+engine.py   OrchestrationEngine — builds the LangGraph StateGraph, registers
+            all nodes and edges, compiles the graph with PostgresSaver, and
+            invokes it.  Replaces the custom DAG execution loop.
+            Implemented in Phase 13.
 
-context.py  RunContext dataclass — the shared state bag passed to every stage.
-            Contains: run_id, requirement, stage_artifacts (outputs keyed by
-            stage name), tool_cache (within-run read cache), feature_branch,
-            pr_url, schema_change_detected flag, and stage_evaluations
-            (HybridFeedback from the evaluator, injected into downstream prompts).
+Why LangGraph instead of a custom DAG?
+----------------------------------------
+LangGraph provides native parallel fan-out (multiple nodes run concurrently
+when their shared upstream dependency completes), built-in interrupt() for
+human-in-the-loop gates, automatic state checkpointing to PostgreSQL, and
+run resumption from any checkpoint.  Building these from scratch in Phase 13
+would have been ~400 lines.  With LangGraph it is a declarative graph
+definition of ~80 lines.
 
-Implemented in Phase 3 (stage, dag, context) and Phase 13 (engine).
+LangSmith integration (automatic when env vars are set)
+--------------------------------------------------------
+Set LANGCHAIN_TRACING_V2=true and LANGCHAIN_API_KEY in .env.
+Every LLM call made through any node is automatically traced — inputs,
+outputs, token counts, cost, and latency visible in the LangSmith dashboard.
+No code instrumentation required.
+
+Implemented in Phase 3 (stage, state) and Phase 13 (engine).
 """

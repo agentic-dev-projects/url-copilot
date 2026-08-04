@@ -1,43 +1,83 @@
 """
-orchestrator.scenarios — DAG definitions for the three scenario types.
+orchestrator.scenarios — LangGraph pipeline definitions for the three scenario types.
 
 Overview
 --------
-A scenario translates a classified requirement type into a concrete DAG of
-StageNodes with dependencies, gate requirements, and retry limits.  The
-OrchestrationEngine executes the DAG without knowing which scenario type
-produced it — the DAG is the full specification.
+A scenario builds a compiled LangGraph StateGraph for a given requirement type.
+The OrchestrationEngine (Phase 13) calls scenario.build_graph() to get the
+compiled graph, then invokes it with the initial OrchestratorState.
 
 Scenario types
 --------------
-GreenFieldScenario   New feature — no existing code modified (only new files
-                     + router registration).  Agent does not need to read
-                     existing code before proposing architecture.
-
+GreenFieldScenario   New feature — no existing code modified.
 BrownfieldScenario   Modifies existing code.  REQUIREMENTS_ANALYSIS and
-                     ARCHITECTURE_DESIGN prompts instruct the agent to read
-                     current code before proposing any changes.  Impact
-                     analysis is a required section of the architecture artifact.
+                     ARCHITECTURE_DESIGN nodes instruct the agent to read
+                     current code before proposing changes.
+AmbiguousScenario    Unclear scope.  Planner runs clarification loop first;
+                     resolved_requirement is set in OrchestratorState before
+                     the graph executes.
 
-AmbiguousScenario    Unclear scope.  The Planner runs a clarification loop
-                     (up to 2 rounds of questions) before the DAG executes.
-                     RunContext.resolved_requirement is set from the loop
-                     output and used as the basis for all subsequent stages.
+LangGraph graph structure (all three scenarios share this topology)
+--------------------------------------------------------------------
 
-Shared DAG structure
---------------------
-All three scenarios share the same 9-stage structure and dependency graph:
+    START
+      │
+    requirements_analysis
+      │
+    architecture_design
+      │
+    architecture_gate          ← interrupt() — hybrid eval + human [y/n]
+      │
+    ┌─┴─────────────────┐
+    implementation_plan  test_plan    (parallel fan-out)
+    └─────────┬──────────┘
+              │  (fan-in sync — LangGraph waits for both)
+          implementation
+              │
+    ┌─────────┴──────────┐  conditional edge: schema_change_detected?
+    │                    │
+  schema_gate         (skip)
+    │                    │
+    └────────────────────┘
+              │
+    ┌─────────┴──────────┐
+    unit_tests  integration_tests     (parallel fan-out)
+    └─────────┬──────────┘
+              │  (fan-in sync)
+          tests_gate             ← interrupt() — hybrid eval + human [y/n]
+              │
+          documentation
+              │
+          pr_gate                ← interrupt() — wait for GitHub PR merge
+              │
+          release_readiness
+              │
+          release_gate           ← interrupt() — hybrid eval + human [y/n]
+              │
+            END
 
-  REQUIREMENTS_ANALYSIS → ARCHITECTURE_DESIGN → [IMPL_PLAN ‖ TEST_PLAN]
-  → (sync) → IMPLEMENTATION → [UNIT_TESTS ‖ INTEGRATION_TESTS]
-  → (sync) → DOCUMENTATION → RELEASE_READINESS
+Key LangGraph concepts used
+----------------------------
+add_node(name, fn)              Each node is a plain Python function:
+                                (OrchestratorState) → dict (partial state update)
 
-The differences are in the per-stage prompts and the Planner's pre-flight
-work, not in the DAG topology itself.
+add_edge(a, b)                  b runs after a completes.
+
+add_edge([a, b], c)             Fan-in: c waits for both a and b (sync point).
+
+add_conditional_edges(a, fn)    Branch: fn(state) returns the next node name.
+                                Used for the schema change gate (Gate #2).
+
+interrupt(payload)              Human-in-the-loop pause.  LangGraph serialises
+                                state to PostgreSQL and stops.  Resume by calling
+                                graph.invoke(None, config) with the same thread_id.
+
+compile(checkpointer=saver)     Bakes the graph into an executable with
+                                PostgresSaver for state persistence.
 
 Files
 -----
-base.py         BaseScenario abstract class with build_dag() interface.
+base.py         BaseScenario with build_graph() interface.
 greenfield.py   GreenFieldScenario(BaseScenario)
 brownfield.py   BrownfieldScenario(BaseScenario)
 ambiguous.py    AmbiguousScenario(BaseScenario)

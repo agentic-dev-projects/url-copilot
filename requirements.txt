@@ -32,3 +32,20 @@ pytest-cov==5.0.0
 # ── Code quality ──────────────────────────────────────────────────────────────
 black==24.10.0
 mypy==1.11.2
+
+# ── Orchestrator: LLM + AI framework ──────────────────────────────────────────
+openai>=1.40.0                      # OpenAI API client (gpt-4o, o1-mini)
+PyYAML>=6.0                         # Load config/users.yaml, rbac.yaml, models.yaml
+
+# ── Orchestrator: LangGraph execution engine ──────────────────────────────────
+langgraph>=0.2.0                    # DAG execution, parallel stages, interrupt() for human gates
+langgraph-checkpoint-postgres>=1.0.0  # PostgresSaver — persists graph state to existing PostgreSQL
+
+# ── Orchestrator: LangSmith observability ─────────────────────────────────────
+langsmith>=0.1.0                    # Automatic LLM call tracing, token/cost/latency dashboard
+
+# ── Orchestrator: GitHub integration ──────────────────────────────────────────
+PyGithub>=2.3.0                     # create branch, open PR, poll merge status
+
+# ── Orchestrator: Async test support ──────────────────────────────────────────
+pytest-asyncio>=0.23.0              # async test support for LangGraph node functions

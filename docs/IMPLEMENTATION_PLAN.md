@@ -156,52 +156,37 @@ class StageResult:
     model_used: str | None = None
 ```
 
-**`orchestrator/core/context.py`**:
+**`orchestrator/core/state.py`** _(replaces context.py — LangGraph requires TypedDict)_:
 ```python
-from dataclasses import dataclass, field
 from typing import Any
+from typing_extensions import TypedDict
 
-@dataclass
-class RunContext:
-    run_id: str
-    requirement: str
-    resolved_requirement: str = ""
-    scenario_type: str = ""
-    triggered_by: str = ""              # github_login
-    stage_artifacts: dict[str, Any] = field(default_factory=dict)
-    tool_cache: dict[str, Any] = field(default_factory=dict)
-    feature_branch: str | None = None
-    pr_url: str | None = None
-    pr_number: int | None = None
-    schema_change_detected: bool = False
-    assumptions: list[str] = field(default_factory=list)
-    stage_evaluations: dict[str, Any] = field(default_factory=dict)  # keyed by stage_name → HybridFeedback (typed in Phase 3.5)
+class OrchestratorState(TypedDict, total=False):
+    run_id:                 str
+    requirement:            str
+    resolved_requirement:   str
+    scenario_type:          str
+    triggered_by:           str
+    stage_artifacts:        dict[str, Any]
+    stage_evaluations:      dict[str, Any]
+    feature_branch:         str | None
+    pr_url:                 str | None
+    pr_number:              int | None
+    schema_change_detected: bool
+    assumptions:            list[str]
+    tool_cache:             dict[str, Any]  # in-memory only, not checkpointed by LangGraph
 ```
 
-**`orchestrator/core/dag.py`**:
+`total=False` means every key is optional — each pipeline node returns only the keys it changed and LangGraph merges the partial update automatically.
 
-Implement `DAGGraph` with:
-- `add_node(node: StageNode) -> None`
-- `add_edge(from_stage: str, to_stage: str) -> None`
-- `get_ready_stages() -> list[StageNode]` — nodes whose all deps are COMPLETED
-- `mark_completed(stage_name: str) -> None`
-- `mark_failed(stage_name: str) -> None`
-- `is_complete() -> bool` — all nodes COMPLETED or SKIPPED
-- `is_stuck() -> bool` — some nodes FAILED, no RUNNING nodes, not complete
-- `topological_sort() -> list[str]` — for display/logging purposes
+> **Note**: `context.py` (RunContext dataclass) and `dag.py` (DAGGraph) were planned here but deleted when we switched to LangGraph. `state.py` replaces both: LangGraph manages the graph topology (replacing DAGGraph) and checkpoints OrchestratorState to PostgreSQL after every node (replacing manual RunContext passing).
 
 **Verify**:
 ```python
-# Quick smoke test (no pytest needed)
-dag = DAGGraph()
-dag.add_node(StageNode("A"))
-dag.add_node(StageNode("B", depends_on=["A"]))
-dag.add_node(StageNode("C", depends_on=["A"]))
-dag.add_node(StageNode("D", depends_on=["B", "C"]))
-assert [n.name for n in dag.get_ready_stages()] == ["A"]
-dag.mark_completed("A")
-ready = {n.name for n in dag.get_ready_stages()}
-assert ready == {"B", "C"}   # parallel
+from orchestrator.core.state import OrchestratorState
+state: OrchestratorState = {"run_id": "test-123", "requirement": "Add QR endpoint"}
+assert state["run_id"] == "test-123"
+assert state.get("schema_change_detected") is None  # total=False — key absent until set
 ```
 
 ---
@@ -459,6 +444,7 @@ Files to create (implement in this order):
 
 8. **`orchestrator/gateway/gateway.py`** — `AIGateway`
    - Assembles all components above
+   - At startup: wrap the OpenAI client with `langsmith.wrappers.wrap_openai(openai.OpenAI())` — this single call enables automatic LangSmith tracing for every subsequent OpenAI API call (inputs, outputs, token counts, cost, latency) with zero additional instrumentation
    - `call(request: GatewayRequest) -> GatewayResponse`
    - Full pipeline as described in Section 5.1 of architecture doc
 
@@ -682,9 +668,12 @@ STAGE_CONTEXT_FILES = {
 
 File: **`orchestrator/agents/stage_agent.py`** — `StageAgent`:
 ```python
+from langsmith import traceable
+
+@traceable(name="stage_agent.run")
 def run(
     stage_name: str,
-    context: RunContext,
+    state: OrchestratorState,
     gateway: AIGateway,
     memory_store: MemoryStore,
     tool_registry: ToolRegistry,
@@ -699,11 +688,13 @@ def run(
     # 7. Return StageResult
 ```
 
+The `@traceable` decorator makes this function a named span in LangSmith. Every LLM call made via the gateway inside this function automatically becomes a child span, giving a full trace tree: `stage_agent.run` → `gateway.call` → OpenAI API call. No other instrumentation needed.
+
 **Tool call handling** (multi-turn loop):
 ```python
 while response has tool_calls:
     for tool_call in response.tool_calls:
-        result = tool_registry.call(tool_call.name, tool_call.args, context, metrics)
+        result = tool_registry.call(tool_call.name, tool_call.args, state, metrics)
         conversation_history.append({"role": "tool", "content": result, ...})
     response = gateway.call(updated_messages)
 ```
@@ -715,76 +706,60 @@ while response has tool_calls:
 ### Phase 13 — Orchestration Engine
 **Status**: ❌ TODO
 
+> **LangGraph replaces the custom DAG loop.** The ~400-line execute() loop with manual threading, retry logic, and gate polling is replaced by a declarative ~80-line LangGraph StateGraph that provides all of these natively: parallel fan-out, `interrupt()` for human gates, `RetryPolicy` for retries, and `PostgresSaver` for state checkpointing.
+
 File: **`orchestrator/core/engine.py`** — `OrchestrationEngine`:
 
 ```python
-def execute(
-    dag: DAGGraph,
-    context: RunContext,
-    gateway: AIGateway,
-    checkpoint: RBACCheckpoint,
-    audit: AuditLogger,
-    state_store: RunStateStore,
-    memory_store: MemoryStore,
-    tool_registry: ToolRegistry,
-) -> None:
-    # Main loop:
-    while not dag.is_complete():
-        ready_stages = dag.get_ready_stages()
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.types import interrupt
 
-        # Run parallel-ready stages concurrently
-        # Use threading.Thread or asyncio depending on implementation
-        for stage in ready_stages:
-            run_stage(stage, context, ...)
+class OrchestrationEngine:
+    def __init__(self, db_session, scenario):
+        self.db_session = db_session
+        self.scenario = scenario
 
-        # Wait for all concurrent stages to complete (sync point)
-        # If dag.is_stuck(): handle failure (pause run, notify)
+    def build_graph(self) -> CompiledGraph:
+        # Delegate to the scenario — each scenario defines its own graph topology
+        saver = PostgresSaver(self.db_session)
+        return self.scenario.build_graph(saver)
+
+    def run(self, initial_state: OrchestratorState) -> OrchestratorState:
+        graph = self.build_graph()
+        config = {"configurable": {"thread_id": initial_state["run_id"]}}
+        return graph.invoke(initial_state, config)
+
+    def resume(self, run_id: str, human_input: dict) -> OrchestratorState:
+        # Called after a human approves a gate (interrupt resumed)
+        graph = self.build_graph()
+        config = {"configurable": {"thread_id": run_id}}
+        return graph.invoke(human_input, config)
 ```
 
-**Per-stage execution**:
+**How LangGraph handles what the old engine did manually**:
+
+| Old engine concern | LangGraph equivalent |
+|---|---|
+| `threading.Thread` for parallel stages | `add_edge([a, b], c)` — fan-out runs nodes concurrently |
+| Manual sync point (wait for all threads) | `add_edge([a, b], c)` fan-in — c waits for both a and b |
+| `while True: time.sleep(30)` PR polling | `interrupt(payload)` — state saved to DB; process exits cleanly |
+| `for attempt in range(max_attempts)` retry loop | `RetryPolicy(max_attempts=3, backoff_factor=2.0)` on node |
+| Crash recovery (re-read context from DB) | `PostgresSaver` checkpoints after every node; resume with same thread_id |
+| `context.schema_change_detected` branch | `add_conditional_edges(node, fn)` — fn reads state, returns next node name |
+
+**Per-node function signature** (same pattern for every stage):
 ```python
-def run_stage(stage, context, ...):
-    for attempt in range(1, stage.max_attempts + 1):
-        audit.log(run_id, STAGE_STARTED, stage.name)
-        try:
-            result = stage_agent.run(stage.name, context, ...)
-            # Exit gate: guardrail scan on output
-            guardrail.check_output(result.output_artifact)
-            # If gate required: request approval
-            if stage.requires_gate:
-                approve_gate(stage, context, checkpoint, audit)
-            dag.mark_completed(stage.name)
-            context.stage_artifacts[stage.name] = result.output_artifact
-            state_store.save_stage_result(result, context.run_id)
-            audit.log(run_id, STAGE_COMPLETED, stage.name)
-            return
-        except Exception as e:
-            audit.log(run_id, STAGE_RETRYING if attempt < max else STAGE_FAILED, ...)
-            if attempt == stage.max_attempts:
-                dag.mark_failed(stage.name)
-                raise
+def requirements_analysis_node(state: OrchestratorState) -> dict:
+    # Run stage agent
+    result = stage_agent.run("requirements_analysis", state, ...)
+    # Return ONLY the keys this node changed
+    return {
+        "stage_artifacts": {**state.get("stage_artifacts", {}), "requirements_analysis": result.output_artifact}
+    }
 ```
 
-**GitHub PR gate** (between DOCUMENTATION and RELEASE_READINESS):
-```python
-def wait_for_pr_merge(context, tool_registry, audit):
-    pr_number, pr_url = tool_registry.call("create_pr", {...}, context, ...)
-    context.pr_url = pr_url
-    context.pr_number = pr_number
-    audit.log(run_id, PR_CREATED, details={"pr_url": pr_url})
-    print(f"\nPR created: {pr_url}")
-    print("Waiting for TECH_LEAD to review and merge...")
-    while True:
-        status = tool_registry.call("poll_pr_status", {"pr_number": pr_number}, ...)
-        if status["merged"]:
-            audit.log(run_id, PR_MERGED, actor=status["merged_by"])
-            return
-        if status["closed"]:
-            raise PRRejectedError("PR closed without merging")
-        time.sleep(30)
-```
-
-**Verify**: Build a minimal 3-stage DAG (A → B → C), run engine with mock agents, confirm all stages execute in order with audit events written.
+**Verify**: Build a minimal 3-node graph (A → B → C) with mock node functions. Invoke it, confirm all three nodes execute in order and state is checkpointed to PostgreSQL after each node.
 
 ---
 
@@ -801,11 +776,12 @@ def classify(requirement: str, gateway: AIGateway, token: str) -> str:
 
 **`orchestrator/planner/planner.py`** — `Planner`:
 ```python
-def plan(requirement: str, classifier_result: str, ...) -> tuple[DAGGraph, RunContext]:
-    # Select scenario DAG based on classifier_result
+def plan(requirement: str, classifier_result: str, ...) -> OrchestratorState:
+    # Select scenario class based on classifier_result (greenfield / brownfield / ambiguous)
     # For "ambiguous": run clarification loop first, get resolved_requirement
-    # Create run record in DB
-    # Return (dag, context)
+    # Create run record in DB (orch_runs)
+    # Return initial OrchestratorState with run_id, requirement, scenario_type, triggered_by set
+    # Engine.run() will call scenario.build_graph() and invoke it with this state
 ```
 
 **Clarification loop** (for ambiguous):
@@ -828,54 +804,85 @@ def run_clarification_loop(requirement: str, gateway: AIGateway, ...) -> dict:
 ### Phase 15 — Scenarios
 **Status**: ❌ TODO
 
+> **LangGraph replaces build_dag().** Each scenario now returns a compiled LangGraph `StateGraph` instead of a `DAGGraph`. The graph topology — fan-out, fan-in, conditional edges, interrupt() gates — is declared once per scenario using LangGraph's API.
+
 **`orchestrator/scenarios/base.py`** — `BaseScenario`:
 ```python
+from langgraph.graph.graph import CompiledGraph
+from langgraph.checkpoint.postgres import PostgresSaver
+
 class BaseScenario:
-    def build_dag(self, context: RunContext) -> DAGGraph:
+    def build_graph(self, saver: PostgresSaver) -> CompiledGraph:
         raise NotImplementedError
 ```
 
-**`orchestrator/scenarios/greenfield.py`** — `GreenfieldScenario(BaseScenario)`:
+**`orchestrator/scenarios/greenfield.py`** — `GreenFieldScenario(BaseScenario)`:
 ```python
-def build_dag(self, context: RunContext) -> DAGGraph:
-    dag = DAGGraph()
-    dag.add_node(StageNode("requirements_analysis"))
-    dag.add_node(StageNode("architecture_design",
-                           depends_on=["requirements_analysis"],
-                           requires_gate="approve_architecture"))
-    dag.add_node(StageNode("implementation_plan", depends_on=["architecture_design"]))
-    dag.add_node(StageNode("test_plan", depends_on=["architecture_design"]))
-    dag.add_node(StageNode("implementation",
-                           depends_on=["implementation_plan", "test_plan"],
-                           requires_gate="approve_schema_change"))  # conditional
-    dag.add_node(StageNode("unit_tests", depends_on=["implementation"]))
-    dag.add_node(StageNode("integration_tests", depends_on=["implementation"]))
-    dag.add_node(StageNode("documentation", depends_on=["unit_tests", "integration_tests"]))
-    dag.add_node(StageNode("release_readiness",
-                           depends_on=["documentation"],
-                           requires_gate="approve_release"))
-    return dag
+def build_graph(self, saver: PostgresSaver) -> CompiledGraph:
+    graph = StateGraph(OrchestratorState)
+
+    # Nodes — each is a plain function (OrchestratorState) -> dict
+    graph.add_node("requirements_analysis", requirements_analysis_node)
+    graph.add_node("architecture_design",   architecture_design_node)
+    graph.add_node("architecture_gate",     architecture_gate_node)   # interrupt()
+    graph.add_node("implementation_plan",   implementation_plan_node)
+    graph.add_node("test_plan",             test_plan_node)
+    graph.add_node("implementation",        implementation_node)
+    graph.add_node("schema_gate",           schema_gate_node)         # interrupt(), conditional
+    graph.add_node("unit_tests",            unit_tests_node)
+    graph.add_node("integration_tests",     integration_tests_node)
+    graph.add_node("tests_gate",            tests_gate_node)          # interrupt()
+    graph.add_node("documentation",         documentation_node)
+    graph.add_node("pr_gate",               pr_gate_node)             # interrupt()
+    graph.add_node("release_readiness",     release_readiness_node)
+    graph.add_node("release_gate",          release_gate_node)        # interrupt()
+
+    # Edges
+    graph.add_edge(START,                       "requirements_analysis")
+    graph.add_edge("requirements_analysis",     "architecture_design")
+    graph.add_edge("architecture_design",       "architecture_gate")
+    # Fan-out: both run concurrently after gate approves
+    graph.add_edge("architecture_gate",         "implementation_plan")
+    graph.add_edge("architecture_gate",         "test_plan")
+    # Fan-in: implementation waits for both
+    graph.add_edge(["implementation_plan", "test_plan"], "implementation")
+    # Conditional: schema gate only if schema_change_detected == True
+    graph.add_conditional_edges(
+        "implementation",
+        lambda state: "schema_gate" if state.get("schema_change_detected") else "unit_tests",
+    )
+    graph.add_edge("schema_gate", "unit_tests")
+    # Fan-out: both test types run concurrently
+    graph.add_edge("unit_tests",                "tests_gate")
+    graph.add_edge("integration_tests",         "tests_gate")
+    graph.add_edge("tests_gate",                "documentation")
+    graph.add_edge("documentation",             "pr_gate")
+    graph.add_edge("pr_gate",                   "release_readiness")
+    graph.add_edge("release_readiness",         "release_gate")
+    graph.add_edge("release_gate",              END)
+
+    return graph.compile(checkpointer=saver)
 ```
 
 **`orchestrator/scenarios/brownfield.py`** — `BrownfieldScenario(BaseScenario)`:
-- Same DAG structure as Greenfield
-- Difference: REQUIREMENTS_ANALYSIS prompt instructs agent to read existing code first
-- ARCHITECTURE_DESIGN prompt includes impact analysis instruction
+- Same graph topology as GreenField
+- Difference: `requirements_analysis_node` and `architecture_design_node` use brownfield-specific prompts that instruct the agent to read existing code before proposing changes
 
 **`orchestrator/scenarios/ambiguous.py`** — `AmbiguousScenario(BaseScenario)`:
-- Same DAG structure
-- Difference: Planner runs clarification loop BEFORE building DAG
-- `resolved_requirement` set in `RunContext` before first stage executes
+- Same graph topology
+- Difference: Planner runs clarification loop BEFORE graph.invoke(), sets `resolved_requirement` in initial `OrchestratorState`
+- First node reads `state["resolved_requirement"]` instead of raw `state["requirement"]`
 
-**Note on Gate #2 (schema change)**: The `approve_schema_change` gate is conditional.
-In `engine.run_stage()`, check `context.schema_change_detected` before requesting approval.
-The implementation stage's output artifact must include `"schema_change": bool`.
-If `True`, set `context.schema_change_detected = True` and trigger gate.
+**Note on Gate #2 (schema change)**: `add_conditional_edges` reads `state["schema_change_detected"]` to decide whether to route to `schema_gate` or skip directly to `unit_tests`. The implementation node must set `schema_change_detected: True` in its returned dict if it detects a DB schema change.
+
+**Verify**: Build the GreenField graph with mock node functions. Invoke it with a minimal OrchestratorState. Confirm all nodes execute in the correct order and that fan-out nodes run concurrently (check via timestamps in stage_artifacts).
 
 ---
 
 ### Phase 16 — Metrics Tracker
 **Status**: ❌ TODO
+
+> **LangSmith handles all LLM-level tracing automatically** (inputs, outputs, token counts, cost, latency per call). The `MetricsTracker` here only needs to aggregate our `orch_metrics` table — which exists for a different purpose: `TokenBudgetManager` queries it in real time to enforce per-role daily token caps. `MetricsTracker` reads those same rows to produce the end-of-run CLI summary.
 
 File: **`orchestrator/metrics/tracker.py`** — `MetricsTracker`:
 ```python
@@ -994,6 +1001,9 @@ Add these to `.env`:
 OPENAI_API_KEY=sk-...
 GITHUB_TOKEN=ghp_...          # service account PAT, repo scope
 GITHUB_REPO=agentic-dev-projects/url-copilot
+LANGCHAIN_TRACING_V2=true     # enables LangSmith automatic LLM tracing
+LANGCHAIN_API_KEY=lsv2_...    # LangSmith API key
+LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 ```
 
 ---
@@ -1002,9 +1012,9 @@ GITHUB_REPO=agentic-dev-projects/url-copilot
 
 | Phase | Description | Status |
 |---|---|---|
-| 1 | Config files + directory skeleton | ❌ |
-| 2 | DB migration for orch_ tables | ❌ |
-| 3 | Core data models (stage, dag, context) | ❌ |
+| 1 | Config files + directory skeleton | ✅ |
+| 2 | DB migration for orch_ tables | ✅ |
+| 3 | Core data models (stage.py, state.py — OrchestratorState TypedDict for LangGraph) | ✅ |
 | 3.5 | Evaluator component (hybrid LLM-as-Judge) | ❌ |
 | 4 | State store (PostgreSQL reads/writes) | ❌ |
 | 5 | Audit logger | ❌ |

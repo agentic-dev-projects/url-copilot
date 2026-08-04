@@ -1,38 +1,41 @@
 """
-orchestrator.metrics — Run-level observability aggregation.
+orchestrator.metrics — Run-level observability and cost budgeting.
 
-Overview
---------
-Individual metrics (tokens, cost, latency, cache hits) are written
-incrementally after each LLM call by the AI Gateway's CostTracker
-(to orch_metrics table).  This package aggregates those per-call rows
-into meaningful run-level summaries.
-
-Tracked per call (written by CostTracker in orchestrator.gateway)
-------------------------------------------------------------------
-tokens_in / tokens_out     Prompt and completion token counts from OpenAI response.
-cost_usd                   Calculated as tokens × price from models.yaml price table.
-llm_latency_ms             Time from gateway.call() to response received.
-tool_latency_ms            Time for each tool execution in ToolRegistry.
-cache_hit                  True if response was served from orch_cache (no OpenAI call).
-model_used                 Which model served this call (gpt-4o, gpt-4o-mini, o1-mini).
-prompt_version             Which prompt file version was used (e.g., architecture_v1).
-
-Derived metrics (computed by MetricsTracker at run end)
+Observability split between LangSmith and orch_metrics
 -------------------------------------------------------
-total_cost_usd             Sum of all cost_usd for the run.
-total_tokens               Sum of tokens_in + tokens_out.
-cache_hit_rate             Fraction of calls served from cache.
-avg_llm_latency_ms         Average LLM call latency across the run.
-stages_completed           Count of stages with status=completed.
-retry_count                Total stage retry attempts across the run.
-mttr                       Mean time to recovery: avg time from STAGE_FAILED
-                           to next STAGE_COMPLETED on the same stage (retries).
-success_rate               Across all runs: completed / total runs.
+LangSmith (automatic, zero code):
+    Every LLM call trace — inputs, outputs, token counts, latency,
+    model used, prompt version — visible in the LangSmith dashboard.
+    No instrumentation needed; set LANGCHAIN_TRACING_V2=true in .env.
+
+orch_metrics table (our custom tracking):
+    Per-call rows written by CostTracker in the gateway after each LLM call.
+    Purpose: RBAC daily token budget enforcement (TokenBudgetManager queries
+    this table to check if a user has exceeded their daily token cap).
+    Also aggregated at run end for the CLI summary printout.
+
+Why keep orch_metrics if LangSmith already tracks tokens?
+----------------------------------------------------------
+LangSmith is an external SaaS service.  TokenBudgetManager needs to query
+token usage in real time to decide whether to allow the next call.  Querying
+our own PostgreSQL table is sub-millisecond; calling the LangSmith API for
+budget enforcement would add latency and a network dependency to every LLM call.
+orch_metrics is the authoritative source for budget decisions; LangSmith is
+the observability and debugging surface.
 
 Files
 -----
-tracker.py    MetricsTracker — summarize(run_id), compute_mttr(run_id), success_rate().
+tracker.py    MetricsTracker — summarize(run_id), compute_mttr(run_id).
+              Aggregates orch_metrics rows into the end-of-run CLI summary:
+              total cost, total tokens, cache hit rate, stages completed, etc.
 
-Implemented in Phase 16.
+LangSmith dashboard shows
+--------------------------
+- Full trace tree for each run (node → LLM call → tool calls → response)
+- Token usage per call with cost breakdown
+- Prompt version used at each call
+- Latency distribution across stages
+- Evaluation scores from the hybrid evaluator's o1-mini calls
+
+Implemented in Phase 16 (tracker.py).
 """

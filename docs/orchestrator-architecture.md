@@ -44,7 +44,13 @@
 | URL Shortener Service | **Fully implemented** | `service/` |
 | AI SDLC Orchestrator | **Not yet implemented** | `orchestrator/` |
 
-The **AI SDLC Orchestrator** accepts a natural-language engineering requirement, classifies it, decomposes it into an SDLC dependency graph, executes each stage using OpenAI `gpt-4o` as the agent, enforces human approval gates with RBAC, writes actual code changes to `service/`, creates a GitHub PR, and produces a full audit trail.
+The **AI SDLC Orchestrator** accepts a natural-language engineering requirement, classifies it, decomposes it into a LangGraph pipeline, executes each stage using OpenAI `gpt-4o` as the doer agent, enforces human approval gates with RBAC, writes actual code changes to `service/`, creates a GitHub PR, and produces a full audit trail.
+
+**Core toolstack**:
+- **LangGraph** — pipeline execution engine (parallel stages, interrupt() for human gates, state checkpointing)
+- **LangSmith** — automatic LLM observability (traces, token counts, cost, latency — zero instrumentation)
+- **OpenAI gpt-4o** — doer agent for all SDLC stages
+- **OpenAI o1-mini** — validator agent in the hybrid evaluator
 
 **Assignment context**: This is a Schwab interview project demonstrating agentic SDLC orchestration. The orchestrator is the critical differentiator — evaluated on effectiveness of agentic orchestration, depth of decomposition, validation rigor, and engineering judgment.
 
@@ -99,18 +105,18 @@ High-level summary of what to build:
 
 ```
 orchestrator/
-├── gateway/          AI Gateway (auth, validation, guardrails, tracing, logging)
-├── planner/          Requirement classifier + DAG selector
+├── gateway/          AI Gateway (auth, validation, guardrails, LangSmith-traced LLM calls)
+├── planner/          Requirement classifier + scenario selector
 ├── memory/           Cross-run memory (facts, preferences, decisions)
 ├── cache/            Response cache + tool result cache
 ├── tools/            Tool registry (read_file, write_file, run_tests, github)
 ├── prompt_builder/   Assembles final prompt from 7 layers
-├── core/             DAG, engine, stage models, RunContext
-├── agents/           Thin OpenAI caller (delegates all concerns to gateway)
+├── core/             LangGraph state (OrchestratorState), stage models
+├── agents/           Thin OpenAI caller wrapped with LangSmith @traceable
 ├── evaluator/        Hybrid LLM-as-Judge (ValidatorAgent, HybridGate, EvaluationReport)
 ├── governance/       RBAC checkpoints + SDLC audit log
 ├── state/            PostgreSQL persistence for all orch_ tables
-├── metrics/          Observability tracker
+├── metrics/          Cost budgeting aggregation (LLM tracing handled by LangSmith)
 ├── scenarios/        3 scenario DAG definitions
 ├── config/           users.yaml, rbac.yaml, models.yaml
 ├── prompts/          Versioned system prompts per stage
@@ -298,15 +304,31 @@ class AIGateway:
 | File | Responsibility |
 |---|---|
 | `stage.py` | `StageStatus` enum, `StageNode` dataclass, `StageResult` dataclass |
-| `dag.py` | `DAGGraph` — add_node, add_edge, get_ready_stages, topological_sort, mark_complete |
-| `engine.py` | `OrchestrationEngine` — main loop, parallel execution, sync points, retry controller |
-| `context.py` | `RunContext` — shared state bag passed to every stage throughout a run |
+| `state.py` | `OrchestratorState` TypedDict — LangGraph shared state passed between every node |
+| `engine.py` | `OrchestrationEngine` — builds the LangGraph `StateGraph`, registers nodes/edges, compiles with `PostgresSaver`, invokes the graph |
 
-**StageStatus values**: `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `AWAITING_APPROVAL`, `SKIPPED`, `ROLLED_BACK`
+**Why TypedDict instead of dataclass?**
+LangGraph requires state to be a `TypedDict` (or Pydantic model). Each node returns a *partial* dict — only the keys it changed — and LangGraph merges the update into the full state automatically. This is more efficient than passing and copying a full dataclass on every node transition.
 
-**DAG ready-stage logic**: A stage is ready when all its upstream dependencies are `COMPLETED` and its entry gate conditions are satisfied.
+**OrchestratorState key fields**:
+```python
+class OrchestratorState(TypedDict, total=False):
+    run_id:                 str
+    requirement:            str
+    resolved_requirement:   str
+    scenario_type:          str           # greenfield | brownfield | ambiguous
+    triggered_by:           str           # github_login — used for four-eyes check
+    stage_artifacts:        dict[str, Any]  # stage_name → output artifact
+    stage_evaluations:      dict[str, Any]  # stage_name → HybridFeedback (as dict)
+    feature_branch:         str | None
+    pr_url:                 str | None
+    pr_number:              int | None
+    schema_change_detected: bool
+    assumptions:            list[str]
+    tool_cache:             dict[str, Any]  # in-memory only, not checkpointed
+```
 
-**RetryController** (inside `engine.py`): Max 3 attempts per stage. On attempt 3 failure → status becomes `FAILED`, human fallback message printed, run pauses.
+**LangGraph checkpointing**: `PostgresSaver` serialises the full `OrchestratorState` to PostgreSQL after every node. If the process crashes or a human gate pauses the run, resuming is: `graph.invoke(None, config)` with the same `thread_id`.
 
 **RunContext fields**:
 ```python
@@ -725,7 +747,7 @@ See Component Reference 5.1 for implementation detail. Summary of the 11-layer p
 
 ---
 
-## 10. DAG and Orchestration Engine
+## 10. LangGraph Pipeline and Orchestration Engine
 
 ### Stage Definitions
 
@@ -741,42 +763,71 @@ DOCUMENTATION
 RELEASE_READINESS
 ```
 
-### Dependency Graph
+### LangGraph Pipeline Topology
 
 ```
-REQUIREMENTS_ANALYSIS → ARCHITECTURE_DESIGN
-ARCHITECTURE_DESIGN → IMPLEMENTATION_PLAN
-ARCHITECTURE_DESIGN → TEST_PLAN
-IMPLEMENTATION_PLAN + TEST_PLAN → IMPLEMENTATION  (sync point)
-IMPLEMENTATION → UNIT_TESTS
-IMPLEMENTATION → INTEGRATION_TESTS
-UNIT_TESTS + INTEGRATION_TESTS → DOCUMENTATION    (sync point)
-DOCUMENTATION → RELEASE_READINESS
+START
+  │
+requirements_analysis
+  │
+architecture_design
+  │
+architecture_gate          ← interrupt() — hybrid eval + human [y/n]
+  │
+┌─┴─────────────────┐
+implementation_plan  test_plan     ← parallel fan-out
+└─────────┬──────────┘
+          │  fan-in sync (LangGraph waits for both before advancing)
+      implementation
+          │
+  ┌───────┴────────┐  conditional edge on schema_change_detected
+  │                │
+schema_gate     (skip)            ← Gate #2 conditional
+  └───────┬────────┘
+          │
+  ┌───────┴────────┐
+  unit_tests  integration_tests   ← parallel fan-out
+  └───────┬────────┘
+          │  fan-in sync
+      tests_gate                  ← interrupt() — hybrid eval + human [y/n]
+          │
+      documentation
+          │
+      pr_gate                     ← interrupt() — wait for GitHub PR merge
+          │
+      release_readiness
+          │
+      release_gate                ← interrupt() — hybrid eval + human [y/n]
+          │
+         END
 ```
+
+Each node is a plain Python function `(OrchestratorState) -> dict` that returns only the state keys it changed. LangGraph merges the partial update and checkpoints the new state to PostgreSQL via `PostgresSaver` before advancing.
 
 ### Human Gates
 
 | Gate | Stage | Required Permission | Condition |
 |---|---|---|---|
 | #1 Architecture | ARCHITECTURE_DESIGN | `approve_architecture` | Always — includes hybrid AI evaluation |
-| #2 Schema Change | IMPLEMENTATION | `approve_schema_change` | Only if `RunContext.schema_change_detected == True` |
+| #2 Schema Change | IMPLEMENTATION | `approve_schema_change` | Only if `state["schema_change_detected"] == True` |
 | #3 Implementation Review | IMPLEMENTATION | `approve_architecture` | Always — includes hybrid AI evaluation |
 | #4 Tests Review | Post UNIT+INTEGRATION_TESTS | `approve_architecture` | Always — includes hybrid AI evaluation |
 | #5 PR Review | Post-DOCUMENTATION | GitHub PR approval | Always — TECH_LEAD must merge PR on GitHub |
 | #6 Release | RELEASE_READINESS | `approve_release` | Always — includes hybrid AI evaluation |
 
-Hybrid evaluation (Section 5.12) runs before the human is prompted at Gates #1, #3, #4, and #6. The AI evaluation is displayed alongside the stage artifact before the human approves or rejects.
+Gate nodes use LangGraph's `interrupt(payload)` to pause the run, serialise state to PostgreSQL, and wait. Resuming: `graph.invoke(None, config)` with the same `thread_id`.
 
-### Retry Controller
+Hybrid evaluation (Section 5.12) runs inside the gate node before `interrupt()` is called — the AI evaluation result is included in the interrupt payload displayed to the human reviewer.
 
-```
-attempt 1 → stage fails
-attempt 2 → stage fails
-attempt 3 → stage fails
-  → status = FAILED
-  → print: "Stage {name} failed after 3 attempts. Human intervention required."
-  → run pauses (status = PAUSED in orch_runs)
-  → operator can force-stop or manually retry via CLI
+### Retry on Stage Failure
+
+LangGraph's `RetryPolicy` retries a failed node up to `max_attempts` times with configurable backoff. After all attempts fail, the graph transitions to a `FAILED` terminal state and the engine prints a human fallback message.
+
+```python
+from langgraph.pregel import RetryPolicy
+node_with_retry = stage_node.with_retry(
+    RetryPolicy(max_attempts=3)
+)
 ```
 
 ---
@@ -1105,24 +1156,46 @@ while True:
 
 ## 16. Observability
 
-### What Is Tracked and Where
+Observability is split between **LangSmith** (LLM traces) and **our orch_ tables** (business events + cost budgeting).
+
+### LangSmith — LLM Tracing (automatic)
+
+Set three env vars in `.env` — no code instrumentation required:
+```
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=lsv2_...
+LANGCHAIN_PROJECT=url-copilot
+```
+
+The OpenAI client is wrapped with `langsmith.wrappers.wrap_openai()` at gateway startup. From that point every call is captured automatically:
+
+| What LangSmith captures | Where visible |
+|---|---|
+| Full input/output per LLM call | LangSmith dashboard trace tree |
+| Token counts (in + out) per call | LangSmith dashboard |
+| Cost per call (auto-calculated) | LangSmith dashboard |
+| LLM latency per call | LangSmith dashboard |
+| Prompt version used | LangSmith metadata |
+| Model used | LangSmith metadata |
+| Evaluator (o1-mini) calls | LangSmith as child spans |
+
+### orch_ Tables — Business Events and Cost Budgeting
 
 | Metric | Source | Stored in | Field |
 |---|---|---|---|
 | End-to-end run latency | Engine timer | `orch_runs` | `completed_at - created_at` |
-| LLM latency per call | Gateway tracer | `orch_metrics` | `llm_latency_ms` |
 | Tool latency per call | Tool registry | `orch_metrics` | `tool_latency_ms` |
-| Tokens in/out | OpenAI response | `orch_metrics` | `tokens_in`, `tokens_out` |
-| Cost (USD) | Cost tracker | `orch_metrics` | `cost_usd` |
+| Tokens + cost per call | Gateway CostTracker | `orch_metrics` | `tokens_in`, `tokens_out`, `cost_usd` |
 | Cache hit | Cache layer | `orch_metrics` | `cache_hit` |
-| Prompt version | Prompt loader | `orch_stage_results` | `prompt_version` |
-| Model version | models.yaml | `orch_stage_results` | `model_used` |
-| Retry count | Engine | `orch_stage_results` | `attempt_number` |
+| Retry count | LangGraph RetryPolicy | `orch_stage_results` | `attempt_number` |
 | Stage failure reason | Exception capture | `orch_stage_results` | `error_message` |
 | SDLC decisions | Human gates | `orch_audit_events` | `event_type`, `details` |
 | User feedback | CLI end of run | `orch_runs` | `feedback_score`, `feedback_comment` |
 | AI evaluation score | Evaluator | `orch_audit_events` | `details.ai_score`, `details.recommendation` |
 | Override decisions | HybridGate | `orch_audit_events` | `event_type=CHECKPOINT_APPROVED_OVERRIDE` |
+
+**Why keep `orch_metrics` if LangSmith already tracks tokens?**
+`TokenBudgetManager` enforces per-role daily token caps by querying `orch_metrics` in real time before every LLM call. Querying our own PostgreSQL is sub-millisecond — calling the LangSmith API for budget decisions would add latency and a network dependency to every single call.
 
 ### Key Derived Metrics (computed by MetricsTracker)
 
@@ -1130,10 +1203,7 @@ while True:
 # MTTR: average time from STAGE_FAILED to next STAGE_COMPLETED on retry
 mttr = avg(retry_completed_at - failure_at) per run
 
-# Success rate across all runs
-success_rate = count(status='completed') / count(*) from orch_runs
-
-# Cost per run
+# Cost per run (also visible in LangSmith, but available locally)
 total_cost = sum(cost_usd) from orch_metrics where run_id = ?
 
 # Cache efficiency
@@ -1271,9 +1341,9 @@ url-copilot/
 │   ├── core/
 │   │   ├── __init__.py
 │   │   ├── stage.py
-│   │   ├── dag.py
-│   │   ├── engine.py
-│   │   └── context.py
+│   │   ├── stage.py
+│   │   ├── state.py          ← OrchestratorState TypedDict (LangGraph state)
+│   │   └── engine.py         ← builds + invokes the LangGraph StateGraph
 │   │
 │   ├── agents/
 │   │   ├── __init__.py
@@ -1407,3 +1477,7 @@ Full scenario walkthroughs are in `docs/scenarios/`. Summary:
 | Memory | PostgreSQL orch_memory | Same DB, queryable, persistent across sessions | Simple key-value; no semantic similarity |
 | Response cache | PostgreSQL orch_cache | Persistent across restarts; handles reruns of identical prompts | DB round-trip adds ~5ms vs in-memory |
 | Tool write safety | Write only under service/ | Prevents agent writing to arbitrary paths | Agent cannot modify orchestrator's own code |
+| Pipeline engine | LangGraph StateGraph | Native parallel fan-out, built-in interrupt() for human gates, declarative graph definition ~80 lines vs ~400 lines custom | Adds dependency; graph topology must be declared upfront |
+| LLM observability | LangSmith (automatic) | Zero-instrumentation tracing via wrap_openai(); full trace tree, token counts, cost, latency in dashboard | External SaaS; not suitable for real-time budget enforcement |
+| State checkpointing | LangGraph PostgresSaver | Reuses existing PostgreSQL; run survives crash or gate pause; resume with same thread_id | Serialises full OrchestratorState on every node transition |
+| State representation | OrchestratorState TypedDict | Required by LangGraph; each node returns partial dict — only changed keys; LangGraph merges automatically | Less IDE auto-complete than dataclass; no default values |
