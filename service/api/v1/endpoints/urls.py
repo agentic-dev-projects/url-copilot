@@ -1,7 +1,8 @@
-"""URL management endpoints — CRUD for short links."""
+"""URL management endpoints – CRUD for short links."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+from fastapi.responses import JSONResponse
 
 from service.api.deps import check_rate_limit, get_current_user
 from service.config import settings
@@ -12,11 +13,13 @@ from service.schemas.url import (
     URLListResponse,
     URLResponse,
     UpdateURLRequest,
+    QRResponseSchema
 )
 from service.services import url_service
 
-router = APIRouter(prefix="/urls", tags=["urls"])
+import base64
 
+router = APIRouter(prefix="/urls", tags=["urls"])
 
 def _to_response(short_url, base_url: str) -> URLResponse:
     return URLResponse(
@@ -29,7 +32,6 @@ def _to_response(short_url, base_url: str) -> URLResponse:
         created_at=short_url.created_at,
         is_active=short_url.is_active,
     )
-
 
 @router.post(
     "",
@@ -57,7 +59,6 @@ def shorten_url(
 
     return _to_response(short_url, settings.base_url)
 
-
 @router.get(
     "",
     response_model=URLListResponse,
@@ -78,7 +79,6 @@ def list_urls(
         limit=limit,
     )
 
-
 @router.get(
     "/{url_id}",
     response_model=URLResponse,
@@ -93,7 +93,6 @@ def get_url(
     if not short_url:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found")
     return _to_response(short_url, settings.base_url)
-
 
 @router.put(
     "/{url_id}",
@@ -122,7 +121,6 @@ def update_url(
 
     return _to_response(short_url, settings.base_url)
 
-
 @router.delete(
     "/{url_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -137,3 +135,30 @@ def delete_url(
     if not short_url:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found")
     url_service.delete_short_url(db, short_url=short_url)
+
+@router.get(
+    "/{url_id}/qr",
+    response_model=QRResponseSchema,
+    summary="Generate and return a QR code for the original URL associated with the given short URL ID.",
+)
+def get_qr_code(
+    url_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> JSONResponse:
+    """Generate a QR code for the URL and return it as a base64-encoded string."""
+    short_url = url_service.get_short_url_by_id(db, url_id=url_id, owner=current_user)
+    if not short_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="URL not found")
+
+    # Generate QR code
+    try:
+        img_byte_arr = url_service.generate_qr_code(short_url.original_url)
+        qr_code_base64 = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
+        data_uri = f"data:image/png;base64,{qr_code_base64}"
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="QR Code generation failed")
+
+    return {
+        "qr_code_url": data_uri
+    }
