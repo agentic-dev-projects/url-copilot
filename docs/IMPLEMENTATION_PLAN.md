@@ -337,30 +337,29 @@ docker-compose up -d db
 ---
 
 ### Phase 5 — Governance: Audit Logger
-**Status**: ❌ TODO
+**Status**: ✅ Done
 
 File: **`orchestrator/governance/audit.py`**
 
-Implement `AuditLogger` with:
+`AuditLogger` with:
 ```python
-def log(run_id, event_type, stage_name=None, actor="system", actor_role=None, details=None) -> None
+def log(run_id, event_type, actor="system", stage_name=None, actor_role=None, details=None) -> None
+def get_events(run_id) -> list[dict]   # read-only; used in tests and CLI summary
 ```
 
-Writes to `orch_audit_events` table. Uses `RunStateStore` internally.
-**Constraint**: This method only ever INSERTs — never UPDATEs existing rows.
+`EventType(str, Enum)` — 18 constants. Inherits `str` so `EventType.STAGE_STARTED == "STAGE_STARTED"`
+(no `.value` needed in SQL or print statements).
 
-Event type constants (define as string literals or Enum):
-```
-STAGE_STARTED, STAGE_COMPLETED, STAGE_FAILED, STAGE_RETRYING
-CHECKPOINT_REACHED, CHECKPOINT_APPROVED, CHECKPOINT_REJECTED, CHECKPOINT_APPROVED_OVERRIDE
-EVALUATOR_STARTED, EVALUATOR_COMPLETED
-RUN_STARTED, RUN_COMPLETED, RUN_FAILED
-PR_CREATED, PR_MERGED
-MEMORY_WRITTEN
-CLARIFICATION_ASKED, CLARIFICATION_ANSWERED
-```
+Writes to `orch_audit_events` table. **Constraint**: `log()` only ever INSERTs — never UPDATEs or
+DELETEs. No `update()` or `delete()` method exists on the class. This structural guarantee
+satisfies SOC2 CC7.2.
 
-**Verify**: Log 3 events for a run, query DB, confirm 3 rows in correct order.
+`make_audit_logger()` context manager follows the same pattern as `make_store()`.
+
+**Verify** (`orchestrator/tests/test_audit.py` — 11 integration tests, requires PostgreSQL):
+```bash
+.venv/bin/python -m pytest orchestrator/tests/test_audit.py -v
+```
 
 ---
 
@@ -1028,7 +1027,7 @@ LANGCHAIN_PROJECT=url-copilot # LangSmith project name
 | 3 | Core data models (stage.py, state.py — OrchestratorState TypedDict for LangGraph) | ✅ |
 | 3.5 | Evaluator component (hybrid LLM-as-Judge) | ✅ |
 | 4 | State store (RunStateStore — orch_runs + orch_stage_results) | ✅ |
-| 5 | Audit logger | ❌ |
+| 5 | Audit logger (AuditLogger + EventType — append-only orch_audit_events) | ✅ |
 | 6 | Gateway: auth + RBAC checkpoint | ❌ |
 | 7 | Gateway: full pipeline | ❌ |
 | 8 | Memory system | ❌ |
