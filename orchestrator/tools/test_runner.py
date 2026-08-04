@@ -21,6 +21,7 @@ fixes.
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
@@ -44,7 +45,7 @@ def run_tests(path: str = "service/tests/") -> dict:
     """
     result = subprocess.run(
         [
-            "python", "-m", "pytest", path,
+            sys.executable, "-m", "pytest", path,
             "-v", "--tb=short", "--no-header", "-q",
         ],
         capture_output=True,
@@ -78,7 +79,7 @@ def run_linter(path: str = "service/") -> dict:
     """
     result = subprocess.run(
         [
-            "python", "-m", "flake8", path,
+            sys.executable, "-m", "flake8", path,
             "--max-line-length=120",
             "--extend-ignore=E501",   # line-length handled by --max-line-length
         ],
